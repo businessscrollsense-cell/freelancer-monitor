@@ -101,10 +101,45 @@ def cleanup_and_save(seen_ids):
 # ---------------------------------------------------------------------------
 # Skill-ID resolution with daily caching
 # ---------------------------------------------------------------------------
+def _extract_jobs_list(resp_json):
+    """
+    Extract a flat list of job dicts from any shape the API returns.
+    Logs the raw top-level keys so we can see the structure.
+    """
+    log(f"Jobs API response top-level keys: {list(resp_json.keys()) if isinstance(resp_json, dict) else type(resp_json).__name__}")
+    if not isinstance(resp_json, dict):
+        log(f"Unexpected response type: {type(resp_json).__name__}")
+        return []
+
+    result = resp_json.get("result")
+    log(f"result type: {type(result).__name__}, value preview: {str(result)[:200]}")
+
+    if result is None:
+        return []
+    if isinstance(result, list):
+        # result is directly a list of job objects
+        return [j for j in result if isinstance(j, dict)]
+    if isinstance(result, dict):
+        # result may have a "jobs" key (list or dict) or "result" may itself be a job dict
+        jobs_val = result.get("jobs")
+        if isinstance(jobs_val, list):
+            return [j for j in jobs_val if isinstance(j, dict)]
+        if isinstance(jobs_val, dict):
+            # jobs keyed by id
+            return [j for j in jobs_val.values() if isinstance(j, dict)]
+        # Sometimes the result dict IS the jobs dict (id -> job_obj)
+        # If values look like job objects, treat them that way
+        sample = next(iter(result.values()), None) if result else None
+        if isinstance(sample, dict) and "name" in sample:
+            return [j for j in result.values() if isinstance(j, dict)]
+    return []
+
+
 def get_skill_ids(skills, token):
     """
     Map human-readable skill names to Freelancer job IDs.
     Results are cached for 24 hours in skill_ids_cache.json.
+    Falls back to empty list (caller handles no-skill-filter case).
     """
     cache = load_json(SKILL_CACHE, {})
     if cache and time.time() - cache.get("timestamp", 0) < SKILL_CACHE_TTL:
@@ -118,28 +153,39 @@ def get_skill_ids(skills, token):
     headers = {"Authorization": f"Bearer {token}"}
     mapping = {}
 
+    # Log one raw probe call so we can see the exact API shape
+    try:
+        probe = requests.get(
+            f"{FREELANCER_API}/jobs/",
+            params={"limit": 3},
+            headers=headers,
+            timeout=10,
+        )
+        log(f"Jobs API probe status: {probe.status_code}")
+        log(f"Jobs API probe raw (first 500 chars): {probe.text[:500]}")
+    except Exception as e:
+        log(f"Jobs API probe failed: {e}", "warning")
+
     for skill in skills:
         try:
             resp = requests.get(
                 f"{FREELANCER_API}/jobs/",
-                params={"query": skill, "limit": 10},
+                params={"query": skill, "limit": 25},
                 headers=headers,
                 timeout=10,
             )
+            log(f"Skill '{skill}': status={resp.status_code}, raw={resp.text[:300]}")
             if resp.status_code == 200:
-                result_data = resp.json().get("result", [])
-                # API returns jobs as a list directly, or nested under "jobs"
-                if isinstance(result_data, list):
-                    jobs = result_data
-                else:
-                    jobs = result_data.get("jobs", [])
+                jobs = _extract_jobs_list(resp.json())
+                log(f"Skill '{skill}': extracted {len(jobs)} job entries")
                 # Prefer exact case-insensitive match; fall back to first result
                 matched = next(
-                    (j for j in jobs if isinstance(j, dict) and j.get("name", "").lower() == skill.lower()),
-                    next((j for j in jobs if isinstance(j, dict)), None) if jobs else None,
+                    (j for j in jobs if j.get("name", "").lower() == skill.lower()),
+                    jobs[0] if jobs else None,
                 )
-                if matched and isinstance(matched, dict):
+                if matched:
                     mapping[skill] = matched["id"]
+                    log(f"Mapped '{skill}' -> id={matched['id']} name='{matched.get('name')}'")
             time.sleep(0.25)  # polite rate limiting
         except Exception as e:
             log(f"Skill lookup failed for '{skill}': {e}", "warning")
@@ -325,6 +371,7 @@ def save_last_run(projects_checked, alerts_sent):
 # ---------------------------------------------------------------------------
 def main():
     log("=" * 55)
+    log("RUNNING VERSION 2")
     log("Freelancer Monitor started")
 
     # --- Load everything fresh ---
