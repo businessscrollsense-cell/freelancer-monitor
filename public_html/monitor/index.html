@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Freelancer Monitor — Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --surface2:  #22263a;
+      --border:    #2e3250;
+      --accent:    #4f6ef7;
+      --accent-h:  #6b85ff;
+      --success:   #22c55e;
+      --warning:   #f59e0b;
+      --danger:    #ef4444;
+      --text:      #e8eaf6;
+      --muted:     #7c80a0;
+      --tag-bg:    #1e2340;
+      --tag-text:  #8b9cf4;
+      --radius:    10px;
+      --shadow:    0 4px 24px rgba(0,0,0,0.4);
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 0;
+    }
+
+    /* ── Layout ── */
+    .app { display: flex; flex-direction: column; min-height: 100vh; }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 34px; height: 34px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem;
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 5px 14px;
+      font-size: 0.78rem;
+      font-weight: 500;
+    }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.active { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .dot.stale  { background: var(--warning); }
+
+    main {
+      max-width: 980px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 1.1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card-header h2 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .card-header .icon {
+      font-size: 1.05rem;
+      opacity: 0.85;
+    }
+    .card-body {
+      padding: 1.5rem;
+    }
+
+    /* ── Stats row ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+    }
+    .stat {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.2rem;
+    }
+    .stat-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .stat-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .stat-sub {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    /* ── Form ── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group.full { grid-column: 1 / -1; }
+
+    label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    input[type="number"], textarea {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+      padding: 10px 12px;
+      transition: border-color 0.2s;
+      width: 100%;
+      outline: none;
+    }
+    input[type="number"]:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79,110,247,0.15);
+    }
+    textarea { resize: vertical; min-height: 140px; line-height: 1.6; }
+
+    .hint {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    /* ── Tag preview ── */
+    .tag-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .tag {
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      border: 1px solid #2e3a6e;
+      border-radius: 6px;
+      padding: 3px 9px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    /* ── Buttons ── */
+    .btn-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-family: inherit;
+      font-size: 0.88rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: all 0.18s;
+    }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--accent-h); transform: translateY(-1px); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .toast {
+      font-size: 0.82rem;
+      font-weight: 500;
+      padding: 7px 14px;
+      border-radius: 7px;
+      display: none;
+    }
+    .toast.show { display: inline-block; }
+    .toast.ok   { background: rgba(34,197,94,0.15); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+    .toast.err  { background: rgba(239,68,68,0.15);  color: var(--danger);  border: 1px solid rgba(239,68,68,0.3); }
+
+    /* ── Recent Alerts ── */
+    .alert-list { display: flex; flex-direction: column; gap: 0; }
+    .alert-item {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0.5rem 1rem;
+      align-items: start;
+      transition: background 0.15s;
+    }
+    .alert-item:last-child { border-bottom: none; }
+    .alert-item:hover { background: var(--surface2); }
+    .alert-title {
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+    .alert-title a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .alert-title a:hover { color: var(--accent-h); }
+    .alert-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .alert-budget {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--success);
+      white-space: nowrap;
+    }
+    .alert-time {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-align: right;
+    }
+    .empty-state {
+      padding: 3rem 1.5rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    /* ── Loader ── */
+    .loader {
+      width: 20px; height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    .loader.show { display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Misc ── */
+    .page-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    .page-sub {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ── -->
+  <header>
+    <span class="logo">
+      <span class="logo-icon">🤖</span>
+      Freelancer Monitor
+    </span>
+    <div class="status-pill">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Checking…</span>
+    </div>
+  </header>
+
+  <!-- ── Main ── -->
+  <main>
+    <div>
+      <h1 class="page-title">Settings</h1>
+      <p class="page-sub">Changes take effect on the very next cron run (no restart needed).</p>
+    </div>
+
+    <!-- Stats -->
+    <div class="card">
+      <div class="card-header">
+        <span class="icon">📊</span>
+        <h2>Monitor Status</h2>
+      </div>
+      <div class="card-body">
+        <div class="stats-grid">
+          <div class="stat">
+            <div class="stat-label">Last Run</div>
+            <div class="stat-value" id="statLastRun">—</div>
+            <div class="stat-sub" id="statLastRunAgo"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Projects Checked</div>
+            <div class="stat-value" id="statChecked">—</div>
+            <div class="stat-sub">last run</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Alerts Sent</div>
+            <div class="stat-value" id="statAlerts">—</div>
+            <div class="stat-sub">last run</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Lookback Window</div>
+            <div class="stat-value" id="statLookback">—</div>
+            <div class="stat-sub">minutes per run</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Form -->
+    <div class="card">
+      <div class="card-header">
+        <span class="icon">⚙️</span>
+        <h2>Filter Settings</h2>
+      </div>
+      <div class="card-body">
+        <form id="settingsForm">
+          <div class="form-grid">
+
+            <!-- Skills -->
+            <div class="form-group full">
+              <label for="skills">Skills (one per line)</label>
+              <textarea id="skills" name="skills" placeholder="JavaScript&#10;React&#10;Node.js"></textarea>
+              <span class="hint">Projects must match at least one of these skills. Case-insensitive.</span>
+              <div class="tag-preview" id="skillTags"></div>
+            </div>
+
+            <!-- Countries -->
+            <div class="form-group full">
+              <label for="countries">Countries (one per line)</label>
+              <textarea id="countries" name="countries" placeholder="United States&#10;United Kingdom&#10;Canada"></textarea>
+              <span class="hint">Only show projects where the client is from one of these countries.</span>
+              <div class="tag-preview" id="countryTags"></div>
+            </div>
+
+            <!-- Budgets -->
+            <div class="form-group">
+              <label for="minFixed">Minimum Fixed Budget ($)</label>
+              <input type="number" id="minFixed" name="min_fixed_budget" min="0" step="50" />
+              <span class="hint">Fixed-price projects below this are ignored.</span>
+            </div>
+
+            <div class="form-group">
+              <label for="lookback">Lookback Window (minutes)</label>
+              <input type="number" id="lookback" name="lookback_minutes" min="5" max="60" step="5" />
+              <span class="hint">How far back each run looks for new projects. Default: 10.</span>
+            </div>
+
+          </div><!-- /form-grid -->
+
+          <div class="btn-row">
+            <button class="btn btn-primary" type="submit" id="saveBtn">
+              <span>💾</span> Save Settings
+            </button>
+            <div class="loader" id="loader"></div>
+            <span class="toast" id="toast"></span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Recent Alerts -->
+    <div class="card">
+      <div class="card-header">
+        <span class="icon">🚀</span>
+        <h2>Recent Alerts</h2>
+      </div>
+      <div id="recentAlerts" class="alert-list">
+        <div class="empty-state">No alerts yet — the monitor will populate this once it finds a match.</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── Utilities ────────────────────────────────────────────────────────────────
+
+function timeAgo(isoString) {
+  if (!isoString) return '';
+  const diff = Math.floor((Date.now() - new Date(isoString)) / 1000);
+  if (diff < 60)   return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function fmtDate(isoString) {
+  if (!isoString) return '—';
+  return new Date(isoString).toLocaleString(undefined, {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
+function buildTags(container, items) {
+  container.innerHTML = '';
+  (items || []).filter(Boolean).forEach(item => {
+    const t = document.createElement('span');
+    t.className = 'tag';
+    t.textContent = item.trim();
+    container.appendChild(t);
+  });
+}
+
+// ── Load status from API ─────────────────────────────────────────────────────
+
+async function loadStatus() {
+  try {
+    const res  = await fetch('api.php');
+    const data = await res.json();
+
+    // Status pill
+    const dot  = document.getElementById('statusDot');
+    const txt  = document.getElementById('statusText');
+    const lr   = data.last_run || {};
+    const ago  = lr.timestamp ? Math.floor((Date.now() - new Date(lr.timestamp)) / 60000) : null;
+
+    if (ago === null) {
+      dot.className = 'dot';
+      txt.textContent = 'Never run';
+    } else if (ago <= 15) {
+      dot.className = 'dot active';
+      txt.textContent = `Running · ${timeAgo(lr.timestamp)}`;
+    } else {
+      dot.className = 'dot stale';
+      txt.textContent = `Last run ${timeAgo(lr.timestamp)}`;
+    }
+
+    // Stats
+    document.getElementById('statLastRun').textContent    = lr.timestamp ? fmtDate(lr.timestamp) : '—';
+    document.getElementById('statLastRunAgo').textContent = lr.timestamp ? timeAgo(lr.timestamp) : '';
+    document.getElementById('statChecked').textContent    = lr.projects_checked ?? '—';
+    document.getElementById('statAlerts').textContent     = lr.alerts_sent ?? '—';
+
+    // Settings
+    const s = data.settings || {};
+    document.getElementById('statLookback').textContent = s.lookback_minutes ?? '—';
+
+    const skills    = (s.skills    || []).join('\n');
+    const countries = (s.countries || []).join('\n');
+    document.getElementById('skills').value    = skills;
+    document.getElementById('countries').value = countries;
+    document.getElementById('minFixed').value  = s.min_fixed_budget ?? 450;
+    document.getElementById('lookback').value  = s.lookback_minutes ?? 10;
+
+    buildTags(document.getElementById('skillTags'),   s.skills);
+    buildTags(document.getElementById('countryTags'), s.countries);
+
+    // Recent alerts
+    renderAlerts(data.recent || []);
+
+  } catch (e) {
+    console.error('Failed to load status:', e);
+    document.getElementById('statusText').textContent = 'API error';
+  }
+}
+
+// ── Render recent alerts ─────────────────────────────────────────────────────
+
+function renderAlerts(alerts) {
+  const container = document.getElementById('recentAlerts');
+  if (!alerts.length) {
+    container.innerHTML = '<div class="empty-state">No alerts yet — the monitor will populate this once it finds a match.</div>';
+    return;
+  }
+  container.innerHTML = alerts.map(a => {
+    const skills = (a.skills || []).slice(0, 5).map(s => `<span class="tag">${s}</span>`).join('');
+    return `
+      <div class="alert-item">
+        <div>
+          <div class="alert-title"><a href="${a.link}" target="_blank" rel="noopener">${a.title || 'Untitled'}</a></div>
+          <div class="alert-meta">
+            <span>🌍 ${a.country || 'Unknown'}</span>
+            ${skills}
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div class="alert-budget">${a.budget || ''}</div>
+          <div class="alert-time">${timeAgo(a.alerted_at)}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── Live tag preview while typing ────────────────────────────────────────────
+
+document.getElementById('skills').addEventListener('input', function () {
+  buildTags(document.getElementById('skillTags'), this.value.split('\n'));
+});
+document.getElementById('countries').addEventListener('input', function () {
+  buildTags(document.getElementById('countryTags'), this.value.split('\n'));
+});
+
+// ── Save settings ────────────────────────────────────────────────────────────
+
+document.getElementById('settingsForm').addEventListener('submit', async function (e) {
+  e.preventDefault();
+  const btn    = document.getElementById('saveBtn');
+  const loader = document.getElementById('loader');
+  const toast  = document.getElementById('toast');
+
+  btn.disabled = true;
+  loader.classList.add('show');
+  toast.className = 'toast';
+
+  const skills    = document.getElementById('skills').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const countries = document.getElementById('countries').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const minFixed  = parseInt(document.getElementById('minFixed').value, 10) || 0;
+  const lookback  = parseInt(document.getElementById('lookback').value, 10) || 10;
+
+  try {
+    const res  = await fetch('api.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skills, countries, min_fixed_budget: minFixed, lookback_minutes: lookback }),
+    });
+    const data = await res.json();
+
+    toast.textContent = data.message || data.error || (data.ok ? 'Saved!' : 'Error');
+    toast.className   = 'toast show ' + (data.ok ? 'ok' : 'err');
+
+    if (data.ok) {
+      buildTags(document.getElementById('skillTags'),   skills);
+      buildTags(document.getElementById('countryTags'), countries);
+    }
+  } catch (err) {
+    toast.textContent = 'Network error — please try again.';
+    toast.className   = 'toast show err';
+  }
+
+  btn.disabled = false;
+  loader.classList.remove('show');
+  setTimeout(() => { toast.className = 'toast'; }, 4000);
+});
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+loadStatus();
+setInterval(loadStatus, 60000); // auto-refresh every 60 seconds
+</script>
+</body>
+</html>

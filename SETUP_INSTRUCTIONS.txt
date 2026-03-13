@@ -1,0 +1,234 @@
+================================================================
+  FREELANCER MONITOR — COMPLETE SETUP GUIDE
+  (Written for non-coders using cPanel hosting)
+================================================================
+
+This guide walks you through uploading your files, checking
+Python is available, running a quick test, and setting up
+the automatic 5-minute cron job.
+
+────────────────────────────────────────────────────────────
+STEP 1 — UPLOAD FILES VIA CPANEL FILE MANAGER
+────────────────────────────────────────────────────────────
+
+You have these files to upload:
+
+  freelancer_bot.py       ← main script (goes in HOME folder)
+  seen_ids.json           ← starts empty (goes in HOME folder)
+  settings.json           ← your filters (goes in HOME folder)
+  public_html/
+    monitor/
+      index.html          ← settings web page
+      api.php             ← PHP backend for the settings page
+
+The "HOME folder" is your main account folder in cPanel —
+the one that contains public_html as a subfolder.
+On most hosts it looks like:  /home/yourusername/
+
+HOW TO UPLOAD:
+
+  1. Log in to your cPanel (usually yoursite.com/cpanel).
+  2. Open "File Manager" from the cPanel dashboard.
+  3. Make sure you are in your HOME folder (not inside
+     public_html). The path shown at the top should be
+     something like /home/yourusername
+  4. Click "Upload" and upload these three files:
+       freelancer_bot.py
+       seen_ids.json
+       settings.json
+  5. Now navigate INTO public_html by clicking on it.
+  6. Create a new folder called "monitor":
+       Click "+ Folder" → type "monitor" → Create.
+  7. Click into the monitor folder.
+  8. Upload these two files:
+       index.html
+       api.php
+
+When finished your server should look like this:
+
+  /home/yourusername/
+    ├── freelancer_bot.py
+    ├── seen_ids.json
+    ├── settings.json
+    └── public_html/
+          └── monitor/
+                ├── index.html
+                └── api.php
+
+────────────────────────────────────────────────────────────
+STEP 2 — CONFIRM PYTHON 3 IS AVAILABLE
+────────────────────────────────────────────────────────────
+
+  1. In cPanel, find "Terminal" (or "SSH Access") and open it.
+     (If your host doesn't offer Terminal, skip to step 2b.)
+
+  2a. Type this and press Enter:
+        python3 --version
+      You should see something like:  Python 3.9.7
+      That means Python 3 is available. ✓
+
+  2b. If you don't have Terminal access, contact your hosting
+      provider and ask: "Is Python 3 available on my account,
+      and what is the full path to the python3 binary?"
+      Most cPanel hosts have it at one of these paths:
+        /usr/bin/python3
+        /usr/local/bin/python3
+
+  3. Install the required "requests" library (one time only):
+        pip3 install requests
+      or, if that fails:
+        pip3 install --user requests
+
+────────────────────────────────────────────────────────────
+STEP 3 — FIND THE FULL PATH TO YOUR SCRIPT
+────────────────────────────────────────────────────────────
+
+The cron job needs the FULL absolute path to your script.
+
+  1. In Terminal, type:
+        echo $HOME
+     This will print something like:  /home/yourusername
+
+  2. Your script path is:
+        /home/yourusername/freelancer_bot.py
+
+  3. Find the full path to python3:
+        which python3
+     This usually prints:  /usr/bin/python3
+     Write this down — you will need it for the cron job.
+
+────────────────────────────────────────────────────────────
+STEP 4 — TEST THE SCRIPT MANUALLY
+────────────────────────────────────────────────────────────
+
+Before setting up the cron job, run the script once by hand
+to make sure everything is working.
+
+  1. In Terminal, type (replacing paths as needed):
+        python3 /home/yourusername/freelancer_bot.py
+
+  2. Watch the output. You should see lines like:
+        [12:34:56] ==================================================
+        [12:34:56] Freelancer Monitor started
+        [12:34:56] Loaded 0 previously seen project IDs
+        [12:34:56] Fetching skill IDs from Freelancer API…
+        [12:34:56] Fetching projects posted in the last 10 minutes…
+        [12:34:56] Received 12 project(s) from API
+        [12:34:56] Done — checked 12, sent 2 alert(s).
+
+  3. Check your Telegram — you should receive messages for any
+     matching projects found in the last 10 minutes.
+
+  4. If the script fails, check bot.log for error details:
+        cat /home/yourusername/bot.log
+
+  COMMON ISSUES:
+  • "No module named requests" → run:  pip3 install --user requests
+  • "settings.json is missing" → make sure the file was uploaded
+    to the HOME folder (not inside public_html)
+  • "API error 401" → your Freelancer token may be wrong. Check
+    settings.json and make sure the token is correct.
+  • Telegram errors → double-check the bot token and chat ID in
+    settings.json
+
+────────────────────────────────────────────────────────────
+STEP 5 — SET UP THE CPANEL CRON JOB
+────────────────────────────────────────────────────────────
+
+  1. In cPanel, find and open "Cron Jobs".
+
+  2. Under "Add New Cron Job", set the schedule fields to run
+     every 5 minutes:
+
+       Minute:      */5
+       Hour:        *
+       Day:         *
+       Month:       *
+       Weekday:     *
+
+     (There may be a dropdown that says "Every 5 minutes" —
+      you can use that instead of typing the values.)
+
+  3. In the "Command" field, paste EXACTLY this
+     (replacing the path with your actual details):
+
+        /usr/bin/python3 /home/yourusername/freelancer_bot.py >> /home/yourusername/bot.log 2>&1
+
+     Breaking this down:
+       /usr/bin/python3              = full path to Python
+       /home/yourusername/freelancer_bot.py = full path to script
+       >> /home/yourusername/bot.log = append output to log file
+       2>&1                          = also capture errors to log
+
+  4. Click "Add New Cron Job".
+
+  5. Wait 5–10 minutes, then check:
+     a) Your Telegram for any new project notifications.
+     b) The log file for activity:
+          cat /home/yourusername/bot.log
+
+────────────────────────────────────────────────────────────
+STEP 6 — USE THE SETTINGS WEB PAGE
+────────────────────────────────────────────────────────────
+
+  Your settings page is live at:
+    https://yoursite.com/monitor/
+
+  From this page you can:
+  • See when the monitor last ran and how many projects were checked
+  • Add or remove skills
+  • Add or remove countries
+  • Change the minimum fixed budget
+  • View the last 5 projects that triggered an alert
+
+  Changes you make on this page are saved to settings.json
+  immediately and will take effect on the very next cron run —
+  you don't need to restart anything.
+
+  SECURITY TIP: The settings page has no password by default.
+  To protect it, create a file called .htaccess inside the
+  public_html/monitor/ folder with this content:
+
+    AuthType Basic
+    AuthName "Monitor Settings"
+    AuthUserFile /home/yourusername/public_html/monitor/.htpasswd
+    Require valid-user
+
+  Then create the password file by running in Terminal:
+    htpasswd -c /home/yourusername/public_html/monitor/.htpasswd yourusername
+  (It will ask you to set a password.)
+
+────────────────────────────────────────────────────────────
+STEP 7 — CONFIRM EVERYTHING IS WORKING
+────────────────────────────────────────────────────────────
+
+After the cron is set up, confirm by:
+
+  1. Visiting https://yoursite.com/monitor/ and checking
+     that "Last Run" updates every 5 minutes.
+
+  2. Checking bot.log occasionally:
+       cat /home/yourusername/bot.log | tail -30
+
+  3. Watching Telegram — whenever a new project matching
+     your filters is posted, you'll receive a message within
+     5 minutes.
+
+────────────────────────────────────────────────────────────
+FILE SUMMARY
+────────────────────────────────────────────────────────────
+
+  freelancer_bot.py      Main monitor script (run by cron)
+  settings.json          All your filter preferences
+  seen_ids.json          Auto-managed: tracks seen project IDs
+  skill_ids_cache.json   Auto-created: caches skill IDs for 24h
+  last_run.json          Auto-created: records each run's stats
+  recent_alerts.json     Auto-created: stores last 5 alerts
+  bot.log                Auto-created: full activity log
+  public_html/monitor/
+    index.html           Settings web page
+    api.php              PHP backend (read/write settings)
+
+================================================================
+  Questions? Check bot.log first — it captures all errors.
+================================================================
