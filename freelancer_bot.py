@@ -2,7 +2,7 @@
 """
 Freelancer.com Job Monitor Bot
 Checks for new matching projects and sends Telegram notifications.
-Run this script via cron every 5 minutes.
+Runs in a loop, checking every 5 minutes.
 """
 
 import json
@@ -461,4 +461,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    while True:
+        main()
+        time.sleep(300)
