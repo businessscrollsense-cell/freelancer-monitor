@@ -127,13 +127,18 @@ def get_skill_ids(skills, token):
                 timeout=10,
             )
             if resp.status_code == 200:
-                jobs = resp.json().get("result", {}).get("jobs", [])
+                result_data = resp.json().get("result", [])
+                # API returns jobs as a list directly, or nested under "jobs"
+                if isinstance(result_data, list):
+                    jobs = result_data
+                else:
+                    jobs = result_data.get("jobs", [])
                 # Prefer exact case-insensitive match; fall back to first result
                 matched = next(
-                    (j for j in jobs if j.get("name", "").lower() == skill.lower()),
-                    jobs[0] if jobs else None,
+                    (j for j in jobs if isinstance(j, dict) and j.get("name", "").lower() == skill.lower()),
+                    next((j for j in jobs if isinstance(j, dict)), None) if jobs else None,
                 )
-                if matched:
+                if matched and isinstance(matched, dict):
                     mapping[skill] = matched["id"]
             time.sleep(0.25)  # polite rate limiting
         except Exception as e:
