@@ -23,6 +23,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE   = os.path.join(SCRIPT_DIR, "settings.json")
+CONFIG_FILE     = os.path.join(SCRIPT_DIR, "config.json")
 SEEN_IDS_FILE   = os.path.join(SCRIPT_DIR, "seen_ids.json")
 RECENT_FILE     = os.path.join(SCRIPT_DIR, "recent_alerts.json")
 SKILL_CACHE     = os.path.join(SCRIPT_DIR, "skill_ids_cache.json")
@@ -70,14 +71,21 @@ def save_json(path, data):
 # Settings
 # ---------------------------------------------------------------------------
 def load_settings():
-    """Read settings fresh every run so web-form changes apply immediately.
-    Credentials come from environment variables; everything else from settings.json.
-    """
-    settings = load_json(SETTINGS_FILE, {})
+    """Read settings fresh every run so changes apply immediately.
 
-    # Override credentials with environment variables
+    Non-secret config (skills, countries, budgets) comes from config.json (committed).
+    Credentials come from environment variables, falling back to settings.json (local only).
+    """
+    # Start with committed non-secret config
+    settings = load_json(CONFIG_FILE, {})
+
+    # Merge local settings.json on top (credentials + any local overrides)
+    local = load_json(SETTINGS_FILE, {})
+    settings.update(local)
+
+    # Environment variables take final precedence for credentials
     for env_var, key in [
-        ("FREELANCER_TOKEN",  "freelancer_token"),
+        ("FREELANCER_TOKEN",   "freelancer_token"),
         ("TELEGRAM_BOT_TOKEN", "telegram_bot_token"),
         ("TELEGRAM_CHAT_ID",   "telegram_chat_id"),
     ]:
@@ -88,7 +96,7 @@ def load_settings():
     required = ["freelancer_token", "telegram_bot_token", "telegram_chat_id"]
     for key in required:
         if not settings.get(key):
-            log(f"ERROR: '{key}' is missing from settings.json and env var not set.", "error")
+            log(f"ERROR: '{key}' missing — set the env var or add it to settings.json.", "error")
             sys.exit(1)
     return settings
 
