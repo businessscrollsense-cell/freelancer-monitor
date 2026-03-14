@@ -70,15 +70,25 @@ def save_json(path, data):
 # Settings
 # ---------------------------------------------------------------------------
 def load_settings():
-    """Read settings fresh every run so web-form changes apply immediately."""
+    """Read settings fresh every run so web-form changes apply immediately.
+    Credentials come from environment variables; everything else from settings.json.
+    """
     settings = load_json(SETTINGS_FILE, {})
-    if not settings:
-        log("ERROR: settings.json is missing or empty.", "error")
-        sys.exit(1)
+
+    # Override credentials with environment variables
+    for env_var, key in [
+        ("FREELANCER_TOKEN",  "freelancer_token"),
+        ("TELEGRAM_BOT_TOKEN", "telegram_bot_token"),
+        ("TELEGRAM_CHAT_ID",   "telegram_chat_id"),
+    ]:
+        val = os.environ.get(env_var)
+        if val:
+            settings[key] = val
+
     required = ["freelancer_token", "telegram_bot_token", "telegram_chat_id"]
     for key in required:
         if not settings.get(key):
-            log(f"ERROR: '{key}' is missing from settings.json.", "error")
+            log(f"ERROR: '{key}' is missing from settings.json and env var not set.", "error")
             sys.exit(1)
     return settings
 
