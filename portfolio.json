@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Packaging Co",
+    "url": "https://packagingco.netlify.app/",
+    "description": "Business website for a packaging company — clean design, service pages, contact forms",
+    "keywords": ["website", "business site", "brochure", "design", "HTML", "CSS"]
+  },
+  {
+    "name": "Biz Niz",
+    "url": "https://biz-niz.netlify.app/",
+    "description": "Small business web app with product listings and enquiry management",
+    "keywords": ["web app", "ecommerce", "small business", "listings", "React"]
+  }
+]

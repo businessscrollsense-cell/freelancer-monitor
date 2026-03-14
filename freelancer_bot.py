@@ -18,12 +18,18 @@ except ImportError:
     print("ERROR: 'requests' library not installed. Run: pip3 install requests")
     sys.exit(1)
 
+try:
+    import anthropic as anthropic_sdk
+except ImportError:
+    anthropic_sdk = None
+
 # ---------------------------------------------------------------------------
 # Paths — always resolved relative to this script, works from any cron context
 # ---------------------------------------------------------------------------
 SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE   = os.path.join(SCRIPT_DIR, "settings.json")
 CONFIG_FILE     = os.path.join(SCRIPT_DIR, "config.json")
+PORTFOLIO_FILE  = os.path.join(SCRIPT_DIR, "portfolio.json")
 SEEN_IDS_FILE   = os.path.join(SCRIPT_DIR, "seen_ids.json")
 RECENT_FILE     = os.path.join(SCRIPT_DIR, "recent_alerts.json")
 SKILL_CACHE     = os.path.join(SCRIPT_DIR, "skill_ids_cache.json")
@@ -375,6 +381,106 @@ def build_telegram_message(project, country, skill_names):
     )
 
 # ---------------------------------------------------------------------------
+# Bid drafting via Claude API
+# ---------------------------------------------------------------------------
+BID_PROMPT = """You are writing a freelance bid on behalf of Anne Sharp, a senior full-stack web developer.
+
+Write a bid for the project below using EXACTLY this structure and style:
+
+STRUCTURE:
+1. Opening Hook — one or two sentences showing you read the brief. Do NOT start with "I". Start with the project, the problem, or an observation. Make it specific to this post.
+Bad: "This is exactly the kind of project I thrive on."
+Good: "A lot of scheduling tools feel clunky because the logic is bolted on after the fact — building it properly from the start is where I'd focus."
+
+2. Proof You Read Carefully — reference one or two specific details, goals, or constraints from the job post. Name the actual thing they mentioned — the tech stack, the deadline pressure, the audience, the integration they need. Phrase it naturally, as though continuing a thought, not ticking a box.
+
+3. Relevant Experience — Mini Story — two to three sentences describing something genuinely similar Anne has handled. Lead with what was built or solved, then mention the outcome or benefit. Name tools or approaches naturally, not as a keyword list.
+Example style: "I built a multi-tenant booking system for a London-based clinic using Supabase and Next.js — the client reduced their admin overhead significantly because the logic was automated end-to-end rather than patched together."
+
+4. Authority and Trust — one sentence that conveys reliability and professionalism. Write it fresh each time — something a real person would say, not a brochure line. Rotate the angle: sometimes communication, sometimes process, sometimes long-term thinking, sometimes ownership mentality. Never use the same phrasing twice.
+
+5. Recent Previous Projects — choose 1 or 2 items from the portfolio below that are GENUINELY relevant to this project. Only include a link if it clearly relates. If only one fits, use one. Use this exact format:
+Recent work:
+* [url]
+
+6. Close and CTA — one natural sentence inviting next steps, written fresh based on what this specific client needs. Sometimes offer a plan, a quick question, or a specific first step.
+
+Sign off with:
+Regards, Anne S.
+
+STYLE RULES (non-negotiable):
+* 100–150 words total, NOT counting the sign-off and portfolio links
+* No bullet points or lists in the body copy
+* No greetings, no flattery, no filler phrases like "I'd love to help" or "I'm perfect for this"
+* No generic claims — every sentence should be something only Anne could say about this specific project
+* Short paragraphs so the bid is easy to skim
+* Vary sentence rhythm naturally — do not write every sentence to the same length
+* Sound like a person who read the post twice and is responding honestly
+
+PORTFOLIO (use only what's relevant):
+{portfolio}
+
+PROJECT DETAILS:
+Title: {title}
+Budget: {budget}
+Skills: {skills}
+Description:
+{description}"""
+
+
+def _format_portfolio(portfolio):
+    """Format portfolio list into a readable string for the prompt."""
+    lines = []
+    for item in portfolio:
+        lines.append(
+            f"- {item.get('name', '')}: {item.get('url', '')} — {item.get('description', '')} "
+            f"[keywords: {', '.join(item.get('keywords', []))}]"
+        )
+    return "\n".join(lines) if lines else "No portfolio items available."
+
+
+def draft_bid(project, country_name, skill_names):
+    """Call Claude API to draft a bid for the project. Returns the bid text or None."""
+    if anthropic_sdk is None:
+        log("Bid drafting skipped — 'anthropic' package not installed.", "warning")
+        return None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        log("Bid drafting skipped — ANTHROPIC_API_KEY not set.", "warning")
+        return None
+
+    portfolio     = load_json(PORTFOLIO_FILE, [])
+    title         = project.get("title", "N/A")
+    description   = (project.get("description") or "").strip()[:3000]
+    budget        = fmt_budget(project)
+    skills_str    = ", ".join(skill_names) if skill_names else "N/A"
+    portfolio_str = _format_portfolio(portfolio)
+
+    prompt = BID_PROMPT.format(
+        title=title,
+        budget=budget,
+        skills=skills_str,
+        description=description,
+        portfolio=portfolio_str,
+    )
+
+    try:
+        client   = anthropic_sdk.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        bid_text = next(
+            (b.text for b in response.content if b.type == "text"), None
+        )
+        return bid_text
+    except Exception as e:
+        log(f"Bid drafting failed: {e}", "warning")
+        return None
+
+# ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
 def send_telegram(message, bot_token, chat_id):
@@ -519,6 +625,15 @@ def main():
             save_recent_alert(project, country_name, skill_names)
             alerts_sent += 1
             time.sleep(0.5)  # Avoid Telegram rate limits
+
+            # Draft and send bid
+            bid = draft_bid(project, country_name, skill_names)
+            if bid:
+                send_telegram(
+                    f"✍️ DRAFT BID — edit before sending:\n\n{bid}",
+                    tg_token, tg_chat,
+                )
+                time.sleep(0.5)
 
     # --- Persist state ---
     cleaned = cleanup_and_save(new_seen)
