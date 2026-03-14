@@ -263,16 +263,39 @@ def country_allowed(country_name, allowed_set):
         return True  # Unknown country — let it through
     return country_name.lower() in allowed_set
 
-def is_english(project, threshold=0.20):
-    """Return False if more than `threshold` of chars in title+description are non-ASCII."""
+_FOREIGN_WORDS = {
+    # Spanish
+    "somos", "estamos", "necesitamos", "buscamos", "queremos", "tenemos",
+    "para", "con", "los", "las", "una", "uno", "del", "que", "por",
+    "como", "este", "esta", "pero", "muy", "más", "nos", "nuestro",
+    "nuestros", "empresa", "proyecto", "desarrollo", "aplicación",
+    # Portuguese
+    "das", "dos", "para", "com", "uma", "que", "por", "como",
+    "nossa", "nosso", "estamos", "precisamos", "buscamos", "temos",
+    "desenvolvimento", "empresa", "projeto", "aplicativo",
+    # French
+    "nous", "notre", "pour", "avec", "une", "les", "des", "qui",
+    "que", "sur", "pas", "mais", "vous", "est", "sont", "dans",
+    "développement", "entreprise", "projet",
+    # German
+    "wir", "für", "und", "der", "die", "das", "mit", "eine", "einen",
+    "suchen", "brauchen", "unser", "unsere", "entwicklung", "projekt",
+    # Italian
+    "per", "con", "una", "che", "del", "dei", "delle", "siamo",
+    "cerchiamo", "abbiamo", "nostro", "nostra", "sviluppo", "progetto",
+}
+
+def is_english(project):
+    """Return False if the title+description contains 2+ known non-English words."""
     text = " ".join([
         project.get("title", "") or "",
         project.get("description", "") or "",
     ])
     if not text.strip():
         return True  # Nothing to check — let it through
-    non_ascii = sum(1 for c in text if ord(c) > 127)
-    return (non_ascii / len(text)) <= threshold
+    words = set(w.strip(".,!?\"'()[]{}:;").lower() for w in text.split())
+    hits = words & _FOREIGN_WORDS
+    return len(hits) < 2
 
 def budget_ok(project, settings):
     p_type   = project.get("type", "fixed")
