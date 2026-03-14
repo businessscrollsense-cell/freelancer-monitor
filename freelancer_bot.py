@@ -249,7 +249,9 @@ def build_country_set(settings):
     return country_set
 
 def country_allowed(country_name, allowed_set):
-    return bool(country_name) and country_name.lower() in allowed_set
+    if not country_name:
+        return True  # Unknown country — let it through
+    return country_name.lower() in allowed_set
 
 def budget_ok(project, settings):
     p_type   = project.get("type", "fixed")
