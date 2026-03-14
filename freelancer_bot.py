@@ -263,6 +263,17 @@ def country_allowed(country_name, allowed_set):
         return True  # Unknown country — let it through
     return country_name.lower() in allowed_set
 
+def is_english(project, threshold=0.20):
+    """Return False if more than `threshold` of chars in title+description are non-ASCII."""
+    text = " ".join([
+        project.get("title", "") or "",
+        project.get("description", "") or "",
+    ])
+    if not text.strip():
+        return True  # Nothing to check — let it through
+    non_ascii = sum(1 for c in text if ord(c) > 127)
+    return (non_ascii / len(text)) <= threshold
+
 def budget_ok(project, settings):
     p_type   = project.get("type", "fixed")
     budget   = project.get("budget", {}) or {}
@@ -456,6 +467,11 @@ def main():
         currency_code = (project.get("currency") or {}).get("code", "")
         if currency_code == "INR":
             log(f"FILTERED [currency] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            continue
+
+        # Language filter — reject non-English projects
+        if not is_english(project):
+            log(f"FILTERED [language] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Budget filter
