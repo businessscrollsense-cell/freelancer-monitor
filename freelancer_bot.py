@@ -618,7 +618,21 @@ def main():
 
         # Compose and send notification
         skill_names = get_skill_names(project, jobs_dict)
-        message     = build_telegram_message(project, country_name, skill_names)
+
+        # Log which skills matched (there is no client-side skill filter —
+        # the API returns projects tagged with ANY of our skill IDs)
+        proj_job_ids = {str(j.get("id", "")) for j in (project.get("jobs") or [])}
+        matched_skill_ids = proj_job_ids & {str(s) for s in skill_ids}
+        matched_skill_names = [
+            (jobs_dict.get(sid) or {}).get("name", sid) for sid in matched_skill_ids
+        ]
+        log(
+            f"PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
+            f"budget={fmt_budget(project)} country=\"{country_name}\" "
+            f"matched_skills={matched_skill_names or skill_names}"
+        )
+
+        message = build_telegram_message(project, country_name, skill_names)
 
         if send_telegram(message, tg_token, tg_chat):
             log(f"Alert sent: [{proj_id}] {project.get('title', '')[:60]}")
