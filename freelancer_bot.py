@@ -426,6 +426,7 @@ def main():
         # Extra client-side time guard (in case from_time isn't supported)
         ts = float(project.get("time_submitted") or 0)
         if ts and ts < cutoff_ts:
+            log(f"FILTERED [too_old] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)}")
             continue
 
         # Country filter
@@ -436,10 +437,12 @@ def main():
         country_name = country_obj.get("name", "") or ""
 
         if not country_allowed(country_name, allowed):
+            log(f"FILTERED [country] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Budget filter
         if not budget_ok(project, settings):
+            log(f"FILTERED [budget] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Compose and send notification
