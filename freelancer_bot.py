@@ -442,6 +442,12 @@ def main():
             log(f"FILTERED [country] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
+        # Currency filter — reject INR projects
+        currency_code = (project.get("currency") or {}).get("code", "")
+        if currency_code == "INR":
+            log(f"FILTERED [currency] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            continue
+
         # Budget filter
         if not budget_ok(project, settings):
             log(f"FILTERED [budget] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
