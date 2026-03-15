@@ -354,63 +354,57 @@ def build_telegram_message(project, country, skill_names):
 # ---------------------------------------------------------------------------
 # Bid drafting via Claude API
 # ---------------------------------------------------------------------------
-BID_PROMPT = """You are writing a freelance bid on behalf of Anne Sharp, a senior full-stack web developer.
+BID_SYSTEM_TEMPLATE = (
+    "You are writing a Freelancer.com bid for Anne Sharp, a senior web developer "
+    "and digital marketer. Here is her portfolio — pick the 1-2 most relevant items "
+    "based on the job description and reference them naturally in the bid. Only include "
+    "portfolio URLs that are genuinely relevant. Return only the bid text, no commentary.\n\n"
+    "Portfolio:\n{portfolio}"
+)
 
-Write a bid for the project below using EXACTLY this structure and style:
+BID_USER_TEMPLATE = """\
+Write a bid for this project:
+Title: {title}
+Description: {description}
+Budget: {budget}
+Skills: {skills}
+
+Follow this exact structure and rules:
 
 STRUCTURE:
-1. Opening Hook — one or two sentences showing you read the brief. Do NOT start with "I". Start with the project, the problem, or an observation. Make it specific to this post.
-Bad: "This is exactly the kind of project I thrive on."
-Good: "A lot of scheduling tools feel clunky because the logic is bolted on after the fact — building it properly from the start is where I'd focus."
+1. Opening Hook
+Write one or two sentences that show you read the brief and have a genuine reaction to it. Do not open with I — start with the project, the problem, or an observation. Make it specific enough that it could only work for this post.
 
-2. Proof You Read Carefully — reference one or two specific details, goals, or constraints from the job post. Name the actual thing they mentioned — the tech stack, the deadline pressure, the audience, the integration they need. Phrase it naturally, as though continuing a thought, not ticking a box.
+2. Proof You Read Carefully
+Reference one or two specific details, goals, or constraints from the job post. Do not be vague. Name the actual thing they mentioned — the tech stack, the deadline pressure, the audience, the integration they need. Phrase it naturally, as though continuing a thought.
 
-3. Relevant Experience — Mini Story — two to three sentences describing something genuinely similar Anne has handled. Lead with what was built or solved, then mention the outcome or benefit. Name tools or approaches naturally, not as a keyword list.
-Example style: "I built a multi-tenant booking system for a London-based clinic using Supabase and Next.js — the client reduced their admin overhead significantly because the logic was automated end-to-end rather than patched together."
+3. Relevant Experience — Mini Story
+Two to three sentences describing something genuinely similar you have handled. Lead with what you built or solved, then mention the outcome or benefit. Name tools or approaches where relevant. Pick the most relevant portfolio project and reference it naturally with its URL.
 
-4. Authority and Trust — one sentence that conveys reliability and professionalism. Write it fresh each time — something a real person would say, not a brochure line. Rotate the angle: sometimes communication, sometimes process, sometimes long-term thinking, sometimes ownership mentality. Never use the same phrasing twice.
+4. Authority and Trust
+One sentence that conveys reliability and professionalism. Write it fresh — sound like a real person, not a brochure. Rotate the angle each time: sometimes communication, sometimes process, sometimes ownership mentality.
 
-5. Recent Previous Projects — choose 1 or 2 items from the portfolio below that are GENUINELY relevant to this project. Only include a link if it clearly relates. If only one fits, use one. Use this exact format:
+5. Recent Previous Projects
+Use this exact format — only include URLs genuinely relevant to this project (1-2 max):
 Recent work:
 * [url]
 
-6. Close and CTA — one natural sentence inviting next steps, written fresh based on what this specific client needs. Sometimes offer a plan, a quick question, or a specific first step.
+6. Close and CTA
+End with one natural sentence inviting next steps based on what this specific client needs.
 
-Sign off with:
-Regards, Anne S.
+Sign-off: Regards, Anne S.
 
-STYLE RULES (non-negotiable):
-* 100–150 words total, NOT counting the sign-off and portfolio links
+STYLE RULES:
+* 100-150 words total, not including sign-off and links
 * No bullet points or lists in the body copy
-* No greetings, no flattery, no filler phrases like "I'd love to help" or "I'm perfect for this"
-* No generic claims — every sentence should be something only Anne could say about this specific project
-* Short paragraphs so the bid is easy to skim
-* Vary sentence rhythm naturally — do not write every sentence to the same length
-* Sound like a person who read the post twice and is responding honestly
-
-PORTFOLIO (use only what's relevant):
-{portfolio}
-
-PROJECT DETAILS:
-Title: {title}
-Budget: {budget}
-Skills: {skills}
-Description:
-{description}"""
+* No greetings, no flattery, no filler phrases like I would love to help or I am perfect for this
+* No generic claims — every sentence specific to this project
+* Short paragraphs, easy to skim
+* Vary sentence rhythm naturally
+* Sound like a person who read the post twice and is responding honestly"""
 
 
-def _format_portfolio(portfolio):
-    """Format portfolio list into a readable string for the prompt."""
-    lines = []
-    for item in portfolio:
-        lines.append(
-            f"- {item.get('name', '')}: {item.get('url', '')} — {item.get('description', '')} "
-            f"[keywords: {', '.join(item.get('keywords', []))}]"
-        )
-    return "\n".join(lines) if lines else "No portfolio items available."
-
-
-def draft_bid(project, country_name, skill_names):
+def draft_bid(project, skill_names, portfolio):
     """Call Claude API to draft a bid for the project. Returns the bid text or None."""
     if anthropic_sdk is None:
         log("Bid drafting skipped — 'anthropic' package not installed.", "warning")
@@ -421,19 +415,18 @@ def draft_bid(project, country_name, skill_names):
         log("Bid drafting skipped — ANTHROPIC_API_KEY not set.", "warning")
         return None
 
-    portfolio     = load_json(PORTFOLIO_FILE, [])
-    title         = project.get("title", "N/A")
-    description   = (project.get("description") or "").strip()[:3000]
-    budget        = fmt_budget(project)
-    skills_str    = ", ".join(skill_names) if skill_names else "N/A"
-    portfolio_str = _format_portfolio(portfolio)
+    title       = project.get("title", "N/A")
+    description = (project.get("description") or "").strip()[:3000]
+    budget      = fmt_budget(project)
+    skills_str  = ", ".join(skill_names) if skill_names else "N/A"
+    portfolio_json = json.dumps(portfolio, indent=2) if portfolio else "No portfolio available."
 
-    prompt = BID_PROMPT.format(
+    system_prompt = BID_SYSTEM_TEMPLATE.format(portfolio=portfolio_json)
+    user_prompt   = BID_USER_TEMPLATE.format(
         title=title,
+        description=description,
         budget=budget,
         skills=skills_str,
-        description=description,
-        portfolio=portfolio_str,
     )
 
     try:
@@ -441,12 +434,10 @@ def draft_bid(project, country_name, skill_names):
         response = client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=600,
-            messages=[{"role": "user", "content": prompt}],
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
         )
-        bid_text = next(
-            (b.text for b in response.content if b.type == "text"), None
-        )
-        return bid_text
+        return next((b.text for b in response.content if b.type == "text"), None)
     except Exception as e:
         log(f"Bid drafting failed: {e}", "warning")
         return None
@@ -546,6 +537,13 @@ def main():
     lookback = int(settings.get("lookback_minutes", 10))
     allowed  = build_country_set(settings)
 
+    # Load portfolio once at startup
+    portfolio = load_json(PORTFOLIO_FILE, [])
+    if portfolio:
+        log(f"Loaded {len(portfolio)} portfolio item(s)")
+    else:
+        log("No portfolio loaded — bids will be written without portfolio examples.", "warning")
+
     seen_ids = load_seen_ids()
     log(f"Loaded {len(seen_ids)} previously seen project IDs")
 
@@ -631,9 +629,10 @@ def main():
 
         title  = project.get("title", "N/A")
         budget = fmt_budget(project)
+        link   = project_link(project)
 
         # Draft bid with Claude
-        bid = draft_bid(project, country_name, skill_names)
+        bid = draft_bid(project, skill_names, portfolio)
         if not bid:
             log(f"Skipping alert — bid drafting failed for [{proj_id}]")
             continue
@@ -645,15 +644,17 @@ def main():
             tg_msg = (
                 f"✅ BID PLACED\n"
                 f"📋 {title}\n"
-                f"💰 {budget}\n\n"
+                f"💰 {budget}\n"
+                f"🔗 {link}\n\n"
                 f"✍️ BID SENT:\n{bid}"
             )
         else:
             tg_msg = (
                 f"⚠️ BID FAILED — {error}\n"
                 f"📋 {title}\n"
-                f"💰 {budget}\n\n"
-                f"✍️ DRAFT:\n{bid}"
+                f"💰 {budget}\n"
+                f"🔗 {link}\n\n"
+                f"✍️ DRAFT (bid not sent):\n{bid}"
             )
 
         if send_telegram(tg_msg, tg_token, tg_chat):
