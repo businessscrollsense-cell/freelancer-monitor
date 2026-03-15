@@ -168,7 +168,7 @@ _SKILL_KEYWORDS = {
     "bootstrap", "tailwind", "django", "laravel", "webflow", "bubble.io",
     # Design
     "figma", "graphic design", "web design", "website design", "ux design",
-    "ui design", "branding", "logo",
+    "ui design",
     # SEO & content
     "seo", "copywriting", "content strategy", "content writing", "blog",
     # Marketing
@@ -214,6 +214,12 @@ def keyword_match(project):
             return kw
     return None
 
+try:
+    from langdetect import detect as _langdetect, LangDetectException
+except ImportError:
+    _langdetect = None
+    LangDetectException = Exception
+
 _FOREIGN_WORDS = {
     # Spanish
     "somos", "estamos", "necesitamos", "buscamos", "queremos", "tenemos",
@@ -236,17 +242,45 @@ _FOREIGN_WORDS = {
     "cerchiamo", "abbiamo", "nostro", "nostra", "sviluppo", "progetto",
 }
 
+_INDONESIAN_WORDS = {
+    "saya", "kami", "yang", "untuk", "dengan", "dalam", "dan", "ini",
+    "dari", "tidak", "akan", "pada", "atau", "juga", "bisa", "anda",
+    "nya", "itu", "sudah", "karena",
+}
+
 def is_english(project):
-    """Return False if the title+description contains 2+ known non-English words."""
+    """Return False if the text is detected as non-English.
+
+    Uses two methods:
+    1. langdetect library (if installed)
+    2. Word-list checks for Indonesian (3+ hits) and other foreign languages (2+ hits)
+    """
     text = " ".join([
         project.get("title", "") or "",
         project.get("description", "") or "",
     ])
     if not text.strip():
         return True  # Nothing to check — let it through
+
+    # Method 1: langdetect
+    if _langdetect and len(text) > 20:
+        try:
+            lang = _langdetect(text)
+            if lang != "en":
+                return False
+        except LangDetectException:
+            pass  # Fall through to word-list checks
+
+    # Method 2a: Indonesian word list (3+ hits)
     words = set(w.strip(".,!?\"'()[]{}:;").lower() for w in text.split())
-    hits = words & _FOREIGN_WORDS
-    return len(hits) < 2
+    if len(words & _INDONESIAN_WORDS) >= 3:
+        return False
+
+    # Method 2b: Other foreign languages (2+ hits)
+    if len(words & _FOREIGN_WORDS) >= 2:
+        return False
+
+    return True
 
 def budget_ok(project, settings):
     p_type   = project.get("type", "fixed")
