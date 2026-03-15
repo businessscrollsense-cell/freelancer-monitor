@@ -162,15 +162,27 @@ _BLOCKED_COUNTRIES = {
 }
 
 _SKILL_KEYWORDS = {
-    "wordpress", "php", "javascript", "js", "react", "next.js", "nextjs",
-    "node", "typescript", "html", "css", "bootstrap", "tailwind", "figma",
-    "seo", "copywriting", "content", "blog", "social media", "marketing",
-    "digital marketing", "web design", "website", "web app", "web application",
-    "saas", "crm", "ecommerce", "e-commerce", "shopify", "woocommerce",
-    "stripe", "api", "rest api", "graphql", "postgresql", "mysql", "database",
-    "ai", "artificial intelligence", "chatbot", "openai", "chatgpt", "prompt",
-    "mobile app", "swift", "ios", "android", "branding", "logo",
-    "graphic design", "ui", "ux", "design",
+    # Web development
+    "wordpress", "php", "javascript", "js", "react", "react.js", "next.js",
+    "nextjs", "vue.js", "angular", "node", "typescript", "html", "css",
+    "bootstrap", "tailwind", "django", "laravel", "webflow", "bubble.io",
+    # Design
+    "figma", "graphic design", "web design", "website design", "ux design",
+    "ui design", "branding", "logo",
+    # SEO & content
+    "seo", "copywriting", "content strategy", "content writing", "blog",
+    # Marketing
+    "digital marketing", "social media management", "social media marketing",
+    # Web/app types
+    "website", "web app", "web application", "saas", "crm",
+    "ecommerce", "e-commerce", "shopify", "woocommerce", "stripe",
+    # APIs & databases
+    "rest api", "graphql api", "api integration", "api development",
+    "graphql", "postgresql", "mysql", "database",
+    # AI
+    "artificial intelligence", "chatbot", "openai", "chatgpt", "prompt engineering",
+    # Mobile
+    "mobile app", "swift", "ios", "android",
 }
 
 def build_country_set(settings):
