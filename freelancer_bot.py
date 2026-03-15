@@ -385,9 +385,10 @@ Two to three sentences describing something genuinely similar you have handled. 
 One sentence that conveys reliability and professionalism. Write it fresh — sound like a real person, not a brochure. Rotate the angle each time: sometimes communication, sometimes process, sometimes ownership mentality.
 
 5. Recent Previous Projects
-Use this exact format — only include URLs genuinely relevant to this project (1-2 max):
+Use this exact format — only include URLs genuinely relevant to this project (1-2 max).
+Use a hyphen (-) before each portfolio link, not an asterisk (*):
 Recent work:
-* [url]
+- [url]
 
 6. Close and CTA
 End with one natural sentence inviting next steps based on what this specific client needs.
@@ -439,7 +440,7 @@ def draft_bid(project, skill_names, portfolio):
         )
         bid_text = next((b.text for b in response.content if b.type == "text"), None)
         if bid_text:
-            bid_text = bid_text.replace("—", "-").replace("–", "-")
+            bid_text = bid_text.replace("—", "-").replace("–", "-").replace("* http", "- http")
         return bid_text
     except Exception as e:
         log(f"Bid drafting failed: {e}", "warning")
