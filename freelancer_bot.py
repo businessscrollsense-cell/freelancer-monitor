@@ -32,12 +32,10 @@ CONFIG_FILE     = os.path.join(SCRIPT_DIR, "config.json")
 PORTFOLIO_FILE  = os.path.join(SCRIPT_DIR, "portfolio.json")
 SEEN_IDS_FILE   = os.path.join(SCRIPT_DIR, "seen_ids.json")
 RECENT_FILE     = os.path.join(SCRIPT_DIR, "recent_alerts.json")
-SKILL_CACHE     = os.path.join(SCRIPT_DIR, "skill_ids_cache.json")
 LAST_RUN_FILE   = os.path.join(SCRIPT_DIR, "last_run.json")
 LOG_FILE        = os.path.join(SCRIPT_DIR, "bot.log")
 
 FREELANCER_API  = "https://www.freelancer.com/api/projects/0.1"
-SKILL_CACHE_TTL = 86400   # Refresh skill IDs once a day
 ID_RETENTION    = 7 * 24 * 3600  # Keep seen IDs for 7 days
 
 # ---------------------------------------------------------------------------
@@ -123,125 +121,21 @@ def cleanup_and_save(seen_ids):
     return cleaned
 
 # ---------------------------------------------------------------------------
-# Skill-ID resolution with daily caching
-# ---------------------------------------------------------------------------
-def _extract_jobs_list(resp_json):
-    """
-    Extract a flat list of job dicts from any shape the API returns.
-    Logs the raw top-level keys so we can see the structure.
-    """
-    log(f"Jobs API response top-level keys: {list(resp_json.keys()) if isinstance(resp_json, dict) else type(resp_json).__name__}")
-    if not isinstance(resp_json, dict):
-        log(f"Unexpected response type: {type(resp_json).__name__}")
-        return []
-
-    result = resp_json.get("result")
-    log(f"result type: {type(result).__name__}, value preview: {str(result)[:200]}")
-
-    if result is None:
-        return []
-    if isinstance(result, list):
-        # result is directly a list of job objects
-        return [j for j in result if isinstance(j, dict)]
-    if isinstance(result, dict):
-        # result may have a "jobs" key (list or dict) or "result" may itself be a job dict
-        jobs_val = result.get("jobs")
-        if isinstance(jobs_val, list):
-            return [j for j in jobs_val if isinstance(j, dict)]
-        if isinstance(jobs_val, dict):
-            # jobs keyed by id
-            return [j for j in jobs_val.values() if isinstance(j, dict)]
-        # Sometimes the result dict IS the jobs dict (id -> job_obj)
-        # If values look like job objects, treat them that way
-        sample = next(iter(result.values()), None) if result else None
-        if isinstance(sample, dict) and "name" in sample:
-            return [j for j in result.values() if isinstance(j, dict)]
-    return []
-
-
-def get_skill_ids(skills, token):
-    """
-    Map human-readable skill names to Freelancer job IDs.
-    Results are cached for 24 hours in skill_ids_cache.json.
-    Falls back to empty list (caller handles no-skill-filter case).
-    """
-    cache = load_json(SKILL_CACHE, {})
-    if cache and time.time() - cache.get("timestamp", 0) < SKILL_CACHE_TTL:
-        mapping = cache.get("skills", {})
-        ids = [mapping[s] for s in skills if s in mapping]
-        if ids:
-            log(f"Using cached skill IDs ({len(ids)} matched)")
-            return ids
-
-    log("Fetching skill IDs from Freelancer API…")
-    headers = {"Authorization": f"Bearer {token}"}
-    mapping = {}
-
-    # Log one raw probe call so we can see the exact API shape
-    try:
-        probe = requests.get(
-            f"{FREELANCER_API}/jobs/",
-            params={"limit": 3},
-            headers=headers,
-            timeout=10,
-        )
-        log(f"Jobs API probe status: {probe.status_code}")
-        log(f"Jobs API probe raw (first 500 chars): {probe.text[:500]}")
-    except Exception as e:
-        log(f"Jobs API probe failed: {e}", "warning")
-
-    for skill in skills:
-        try:
-            resp = requests.get(
-                f"{FREELANCER_API}/jobs/",
-                params={"query": skill, "limit": 25},
-                headers=headers,
-                timeout=10,
-            )
-            log(f"Skill '{skill}': status={resp.status_code}, raw={resp.text[:300]}")
-            if resp.status_code == 200:
-                jobs = _extract_jobs_list(resp.json())
-                log(f"Skill '{skill}': extracted {len(jobs)} job entries")
-                # Prefer exact case-insensitive match; fall back to first result
-                matched = next(
-                    (j for j in jobs if j.get("name", "").lower() == skill.lower()),
-                    jobs[0] if jobs else None,
-                )
-                if matched:
-                    mapping[skill] = matched["id"]
-                    log(f"Mapped '{skill}' -> id={matched['id']} name='{matched.get('name')}'")
-            time.sleep(0.25)  # polite rate limiting
-        except Exception as e:
-            log(f"Skill lookup failed for '{skill}': {e}", "warning")
-
-    save_json(SKILL_CACHE, {"timestamp": time.time(), "skills": mapping})
-    log(f"Resolved {len(mapping)}/{len(skills)} skill IDs")
-    return list(mapping.values())
-
-# ---------------------------------------------------------------------------
 # Fetch projects from Freelancer API
 # ---------------------------------------------------------------------------
-def fetch_projects(skill_ids, lookback_minutes, token):
-    """
-    Retrieve active projects posted within the last `lookback_minutes` minutes,
-    filtered by the given skill IDs.
-    """
+def fetch_projects(lookback_minutes, token):
+    """Retrieve the 50 most recent active projects, no server-side skill filter."""
     from_time = int(time.time()) - (lookback_minutes * 60)
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # Build query params — use a list of tuples so repeated keys work correctly
-    params = [
-        ("limit", 100),
-        ("sort_field", "time_submitted"),
-        ("sort_order", "desc"),
+    headers   = {"Authorization": f"Bearer {token}"}
+    params    = [
+        ("limit",        50),
+        ("sort_field",   "time_submitted"),
+        ("sort_order",   "desc"),
         ("full_description", "true"),
-        ("job_details", "true"),
+        ("job_details",  "true"),
         ("user_details", "true"),
-        ("from_time", from_time),
+        ("from_time",    from_time),
     ]
-    for sid in skill_ids:
-        params.append(("jobs[]", sid))
-
     try:
         resp = requests.get(
             f"{FREELANCER_API}/projects/active",
@@ -256,12 +150,29 @@ def fetch_projects(skill_ids, lookback_minutes, token):
         log("Freelancer API request timed out.", "error")
     except Exception as e:
         log(f"Freelancer API request failed: {e}", "error")
-
     return {}
 
 # ---------------------------------------------------------------------------
 # Filtering helpers
 # ---------------------------------------------------------------------------
+_BLOCKED_COUNTRIES = {
+    "nigeria", "india", "pakistan", "bangladesh", "indonesia",
+    "philippines", "vietnam", "nepal", "sri lanka", "ghana",
+    "kenya", "ethiopia",
+}
+
+_SKILL_KEYWORDS = {
+    "wordpress", "php", "javascript", "js", "react", "next.js", "nextjs",
+    "node", "typescript", "html", "css", "bootstrap", "tailwind", "figma",
+    "seo", "copywriting", "content", "blog", "social media", "marketing",
+    "digital marketing", "web design", "website", "web app", "web application",
+    "saas", "crm", "ecommerce", "e-commerce", "shopify", "woocommerce",
+    "stripe", "api", "rest api", "graphql", "postgresql", "mysql", "database",
+    "ai", "artificial intelligence", "chatbot", "openai", "chatgpt", "prompt",
+    "mobile app", "swift", "ios", "android", "branding", "logo",
+    "graphic design", "ui", "ux", "design",
+}
+
 def build_country_set(settings):
     """Return a lowercase set of allowed country names."""
     countries = settings.get("countries", [])
@@ -275,7 +186,21 @@ def build_country_set(settings):
 def country_allowed(country_name, allowed_set):
     if not country_name:
         return True  # Unknown country — let it through
-    return country_name.lower() in allowed_set
+    name_lower = country_name.lower()
+    if name_lower in _BLOCKED_COUNTRIES:
+        return False  # Explicit blocklist takes priority
+    return name_lower in allowed_set
+
+def keyword_match(project):
+    """Return the first matching keyword if title/description contains a skill keyword."""
+    text = " ".join([
+        project.get("title", "") or "",
+        project.get("description", "") or "",
+    ]).lower()
+    for kw in _SKILL_KEYWORDS:
+        if kw in text:
+            return kw
+    return None
 
 _FOREIGN_WORDS = {
     # Spanish
@@ -535,25 +460,19 @@ def main():
     log("Freelancer Monitor started")
 
     # --- Load everything fresh ---
-    settings       = load_settings()
-    token          = settings["freelancer_token"]
-    tg_token       = settings["telegram_bot_token"]
-    tg_chat        = str(settings["telegram_chat_id"])
-    skills         = settings.get("skills", [])
-    lookback       = int(settings.get("lookback_minutes", 10))
-    allowed        = build_country_set(settings)
+    settings = load_settings()
+    token    = settings["freelancer_token"]
+    tg_token = settings["telegram_bot_token"]
+    tg_chat  = str(settings["telegram_chat_id"])
+    lookback = int(settings.get("lookback_minutes", 10))
+    allowed  = build_country_set(settings)
 
-    seen_ids       = load_seen_ids()
+    seen_ids = load_seen_ids()
     log(f"Loaded {len(seen_ids)} previously seen project IDs")
 
-    # --- Resolve skill IDs ---
-    skill_ids = get_skill_ids(skills, token)
-    if not skill_ids:
-        log("WARNING: Could not resolve any skill IDs — fetching ALL recent projects.", "warning")
-
-    # --- Fetch from Freelancer ---
+    # --- Fetch from Freelancer (no server-side skill filter) ---
     log(f"Fetching projects posted in the last {lookback} minutes…")
-    result = fetch_projects(skill_ids, lookback, token)
+    result = fetch_projects(lookback, token)
 
     if not result:
         log("No result from Freelancer API. Will try again next run.")
@@ -597,7 +516,8 @@ def main():
         country_name = country_obj.get("name", "") or ""
 
         if not country_allowed(country_name, allowed):
-            log(f"FILTERED [country] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            reason = "blocklist" if country_name.lower() in _BLOCKED_COUNTRIES else "not_allowed"
+            log(f"FILTERED [country/{reason}] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Currency filter — reject INR projects
@@ -616,20 +536,18 @@ def main():
             log(f"FILTERED [budget] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
-        # Compose and send notification
-        skill_names = get_skill_names(project, jobs_dict)
+        # Skill keyword filter — client-side check on title + description
+        matched_kw = keyword_match(project)
+        if not matched_kw:
+            log(f"FILTERED [skill] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            continue
 
-        # Log which skills matched (there is no client-side skill filter —
-        # the API returns projects tagged with ANY of our skill IDs)
-        proj_job_ids = {str(j.get("id", "")) for j in (project.get("jobs") or [])}
-        matched_skill_ids = proj_job_ids & {str(s) for s in skill_ids}
-        matched_skill_names = [
-            (jobs_dict.get(sid) or {}).get("name", sid) for sid in matched_skill_ids
-        ]
+        # All filters passed
+        skill_names = get_skill_names(project, jobs_dict)
         log(
             f"PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
             f"budget={fmt_budget(project)} country=\"{country_name}\" "
-            f"matched_skills={matched_skill_names or skill_names}"
+            f"keyword=\"{matched_kw}\""
         )
 
         message = build_telegram_message(project, country_name, skill_names)
