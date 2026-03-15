@@ -675,20 +675,29 @@ def main():
         # Submit bid to Freelancer
         success, error = submit_bid(project, bid, token)
 
+        SEP = "\u2500" * 25
         if success:
             tg_msg = (
-                f"✅ BID PLACED\n"
-                f"📋 {title}\n"
-                f"💰 {budget}\n"
-                f"🔗 {link}\n\n"
-                f"✍️ BID SENT:\n{bid}"
+                f"✅ BID PLACED\n\n"
+                f"📋 Project: {title}\n"
+                f"🔗 {link}\n"
+                f"💰 Budget: {budget}\n"
+                f"🌍 Country: {country_name}\n\n"
+                f"{SEP}\n\n"
+                f"{bid}\n\n"
+                f"{SEP}"
             )
         else:
             tg_msg = (
-                f"✍️ DRAFT (bid not sent): {title}\n"
-                f"Reason: {error}\n"
-                f"🔗 {link}\n\n"
-                f"{bid}"
+                f"⚠️ BID FAILED\n\n"
+                f"📋 Project: {title}\n"
+                f"🔗 {link}\n"
+                f"💰 Budget: {budget}\n"
+                f"🌍 Country: {country_name}\n"
+                f"❌ Reason: {error}\n\n"
+                f"{SEP}\n\n"
+                f"{bid}\n\n"
+                f"{SEP}"
             )
 
         if send_telegram(tg_msg, tg_token, tg_chat):
