@@ -483,12 +483,23 @@ def parse_bid_error(response_json):
 
 BIDDER_ID = 83207744
 
-def submit_bid(project, bid_text, token):
+def calc_bid_amount(project):
+    """Return (amount, label) at 70% of max budget, or (None, reason) if budget missing."""
+    p_type = project.get("type", "fixed")
+    budget = project.get("budget", {}) or {}
+    max_b  = float(budget.get("maximum") or 0)
+
+    if not max_b:
+        return None, "missing or zero maximum budget"
+
+    amount = round(max_b * 0.70)
+    label  = f"${amount} (70% of ${max_b:.0f} max {'hourly rate' if p_type == 'hourly' else 'budget'})"
+    return amount, label
+
+
+def submit_bid(project, bid_text, amount, token):
     """Submit bid to Freelancer API. Returns (success, reason_string)."""
     proj_id = project.get("id")
-    p_type  = project.get("type", "fixed")
-    budget  = project.get("budget", {}) or {}
-    amount  = float(budget.get("minimum") or 500) if p_type != "hourly" else 500
 
     try:
         resp = requests.post(
@@ -685,6 +696,13 @@ def main():
         budget = fmt_budget(project)
         link   = project_link(project)
 
+        # Calculate bid amount (70% of max budget)
+        amount, amount_label = calc_bid_amount(project)
+        if amount is None:
+            log(f"Skipping [{proj_id}] \"{title[:60]}\" — {amount_label}", "warning")
+            continue
+        log(f"Bid amount calculated: {amount_label}")
+
         # Draft bid with Claude
         bid = draft_bid(project, skill_names, portfolio)
         if not bid:
@@ -692,7 +710,7 @@ def main():
             continue
 
         # Submit bid to Freelancer
-        success, error = submit_bid(project, bid, token)
+        success, error = submit_bid(project, bid, amount, token)
 
         SEP = "\u2500" * 25
         if success:
