@@ -356,9 +356,10 @@ def build_telegram_message(project, country, skill_names):
 # ---------------------------------------------------------------------------
 BID_SYSTEM_TEMPLATE = (
     "You are writing a Freelancer.com bid for Anne Sharp, a senior web developer "
-    "and digital marketer. Here is her portfolio — pick the 1-2 most relevant items "
+    "and digital marketer. Here is her full portfolio — pick the 1-2 most relevant items "
     "based on the job description and reference them naturally in the bid. Only include "
-    "portfolio URLs that are genuinely relevant. Return only the bid text, no commentary.\n\n"
+    "portfolio URLs that are genuinely relevant. Vary your selections — do not always "
+    "pick the same project. Return only the bid text, no commentary.\n\n"
     "Portfolio:\n{portfolio}"
 )
 
@@ -445,6 +446,17 @@ def draft_bid(project, skill_names, portfolio):
     except Exception as e:
         log(f"Bid drafting failed: {e}", "warning")
         return None
+
+def log_portfolio_chosen(bid_text, portfolio):
+    """Scan the bid text for portfolio URLs and log which items Claude chose."""
+    if not bid_text or not portfolio:
+        return
+    chosen = [item["name"] for item in portfolio if item.get("url", "") in bid_text]
+    if chosen:
+        log(f"Portfolio chosen: {', '.join(chosen)}")
+    else:
+        log("Portfolio chosen: none matched in bid text")
+
 
 # ---------------------------------------------------------------------------
 # Bid submission via Freelancer API
@@ -708,6 +720,7 @@ def main():
         if not bid:
             log(f"Skipping alert — bid drafting failed for [{proj_id}]")
             continue
+        log_portfolio_chosen(bid, portfolio)
 
         # Submit bid to Freelancer
         success, error = submit_bid(project, bid, amount, token)
