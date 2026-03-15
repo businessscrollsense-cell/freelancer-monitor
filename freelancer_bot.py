@@ -575,6 +575,18 @@ def main():
     lookback = int(settings.get("lookback_minutes", 10))
     allowed  = build_country_set(settings)
 
+    # --- Verify Freelancer token ---
+    try:
+        me = requests.get(
+            "https://www.freelancer.com/api/users/0.1/self/",
+            headers={"Freelancer-OAuth-V1": token},
+            timeout=10,
+        ).json()
+        user_id = me.get("result", {}).get("id", "unknown")
+        log(f"Logged in as Freelancer user ID: {user_id}")
+    except Exception as e:
+        log(f"Could not verify Freelancer token: {e}", "warning")
+
     # Load portfolio once at startup
     portfolio = load_json(PORTFOLIO_FILE, [])
     if portfolio:
