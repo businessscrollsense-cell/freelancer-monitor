@@ -445,8 +445,40 @@ def draft_bid(project, skill_names, portfolio):
 # ---------------------------------------------------------------------------
 # Bid submission via Freelancer API
 # ---------------------------------------------------------------------------
+def parse_bid_error(response_json):
+    """Extract a human-readable reason from a failed Freelancer API response."""
+    try:
+        status     = response_json.get("status", "")
+        message    = response_json.get("message", "")
+        error_code = response_json.get("error_code", "")
+        combined   = f"{status} {message} {error_code}".lower()
+
+        if "nda" in combined:
+            return "NDA signature required — bid manually"
+        elif "preferred" in combined:
+            return "Preferred bidders only — bid manually if qualified"
+        elif "sla" in combined:
+            return "SLA agreement required — bid manually"
+        elif "not enough bids" in combined or "no bids" in combined:
+            return "Out of bids — top up Freelancer account"
+        elif "already bid" in combined or "duplicate" in combined:
+            return "Already bid on this project"
+        elif "closed" in combined or "expired" in combined:
+            return "Project closed or expired"
+        elif "not allowed" in combined or "enotallowed" in combined:
+            return "Bid not allowed (check project restrictions)"
+        elif message:
+            return f"API error: {message}"
+        elif status:
+            return f"API status: {status}"
+        else:
+            return "Unknown error — check Railway logs"
+    except Exception:
+        return "Could not parse error response"
+
+
 def submit_bid(project, bid_text, token):
-    """Submit bid to Freelancer API. Returns (success, error_message)."""
+    """Submit bid to Freelancer API. Returns (success, reason_string)."""
     proj_id = project.get("id")
     p_type  = project.get("type", "fixed")
     budget  = project.get("budget", {}) or {}
@@ -468,9 +500,9 @@ def submit_bid(project, bid_text, token):
         if resp.status_code in (200, 201):
             log(f"Bid submitted for project {proj_id}")
             return True, None
-        error = resp.json().get("message") or resp.text[:200]
-        log(f"Bid submission failed ({resp.status_code}): {error}", "warning")
-        return False, error
+        reason = parse_bid_error(resp.json())
+        log(f"Bid submission failed ({resp.status_code}): {reason}", "warning")
+        return False, reason
     except Exception as e:
         log(f"Bid submission error: {e}", "warning")
         return False, str(e)
@@ -650,11 +682,10 @@ def main():
             )
         else:
             tg_msg = (
-                f"⚠️ BID FAILED — {error}\n"
-                f"📋 {title}\n"
-                f"💰 {budget}\n"
+                f"✍️ DRAFT (bid not sent): {title}\n"
+                f"Reason: {error}\n"
                 f"🔗 {link}\n\n"
-                f"✍️ DRAFT (bid not sent):\n{bid}"
+                f"{bid}"
             )
 
         if send_telegram(tg_msg, tg_token, tg_chat):
