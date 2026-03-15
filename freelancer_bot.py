@@ -452,6 +452,39 @@ def draft_bid(project, country_name, skill_names):
         return None
 
 # ---------------------------------------------------------------------------
+# Bid submission via Freelancer API
+# ---------------------------------------------------------------------------
+def submit_bid(project, bid_text, token):
+    """Submit bid to Freelancer API. Returns (success, error_message)."""
+    proj_id = project.get("id")
+    p_type  = project.get("type", "fixed")
+    budget  = project.get("budget", {}) or {}
+    amount  = float(budget.get("minimum") or 500) if p_type != "hourly" else 500
+
+    try:
+        resp = requests.post(
+            "https://www.freelancer.com/api/projects/0.1/bids/",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "project_id":           proj_id,
+                "amount":               amount,
+                "period":               7,
+                "milestone_percentage": 100,
+                "description":          bid_text,
+            },
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            log(f"Bid submitted for project {proj_id}")
+            return True, None
+        error = resp.json().get("message") or resp.text[:200]
+        log(f"Bid submission failed ({resp.status_code}): {error}", "warning")
+        return False, error
+    except Exception as e:
+        log(f"Bid submission error: {e}", "warning")
+        return False, str(e)
+
+# ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
 def send_telegram(message, bot_token, chat_id):
@@ -596,22 +629,38 @@ def main():
             f"keyword=\"{matched_kw}\""
         )
 
-        message = build_telegram_message(project, country_name, skill_names)
+        title  = project.get("title", "N/A")
+        budget = fmt_budget(project)
 
-        if send_telegram(message, tg_token, tg_chat):
-            log(f"Alert sent: [{proj_id}] {project.get('title', '')[:60]}")
+        # Draft bid with Claude
+        bid = draft_bid(project, country_name, skill_names)
+        if not bid:
+            log(f"Skipping alert — bid drafting failed for [{proj_id}]")
+            continue
+
+        # Submit bid to Freelancer
+        success, error = submit_bid(project, bid, token)
+
+        if success:
+            tg_msg = (
+                f"✅ BID PLACED\n"
+                f"📋 {title}\n"
+                f"💰 {budget}\n\n"
+                f"✍️ BID SENT:\n{bid}"
+            )
+        else:
+            tg_msg = (
+                f"⚠️ BID FAILED — {error}\n"
+                f"📋 {title}\n"
+                f"💰 {budget}\n\n"
+                f"✍️ DRAFT:\n{bid}"
+            )
+
+        if send_telegram(tg_msg, tg_token, tg_chat):
             save_recent_alert(project, country_name, skill_names)
             alerts_sent += 1
-            time.sleep(0.5)  # Avoid Telegram rate limits
 
-            # Draft and send bid
-            bid = draft_bid(project, country_name, skill_names)
-            if bid:
-                send_telegram(
-                    f"✍️ DRAFT BID — edit before sending:\n\n{bid}",
-                    tg_token, tg_chat,
-                )
-                time.sleep(0.5)
+        time.sleep(2)  # Avoid rate limiting between bids
 
     # --- Persist state ---
     cleaned = cleanup_and_save(new_seen)
@@ -624,4 +673,4 @@ def main():
 if __name__ == "__main__":
     while True:
         main()
-        time.sleep(300)
+        time.sleep(30)
