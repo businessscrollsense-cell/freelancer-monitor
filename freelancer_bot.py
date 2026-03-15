@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -560,6 +561,50 @@ def send_telegram(message, bot_token, chat_id):
     return False
 
 # ---------------------------------------------------------------------------
+# Telegram command listener (runs in background thread)
+# ---------------------------------------------------------------------------
+def telegram_command_listener(bot_token, chat_id, bot_state):
+    """Poll for Telegram bot commands (/pause, /play, /status) in a background thread."""
+    offset = None
+    while True:
+        try:
+            params = {"timeout": 30, "allowed_updates": ["message"]}
+            if offset is not None:
+                params["offset"] = offset
+            resp = requests.get(
+                f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                params=params,
+                timeout=35,
+            )
+            if resp.status_code != 200:
+                time.sleep(5)
+                continue
+            for update in resp.json().get("result", []):
+                offset = update["update_id"] + 1
+                msg = update.get("message", {})
+                msg_chat_id = str((msg.get("chat") or {}).get("id", ""))
+                text = (msg.get("text") or "").strip()
+                if msg_chat_id != chat_id:
+                    continue
+                if text == "/pause":
+                    bot_state["paused"] = True
+                    log("Bot paused via Telegram command.")
+                    send_telegram("⏸ Bot paused. Send /play to resume.", bot_token, chat_id)
+                elif text == "/play":
+                    bot_state["paused"] = False
+                    log("Bot resumed via Telegram command.")
+                    send_telegram("✅ Bot resumed. Scanning every 30 seconds.", bot_token, chat_id)
+                elif text == "/status":
+                    if bot_state["paused"]:
+                        send_telegram("⏸ Bot is paused. Send /play to resume.", bot_token, chat_id)
+                    else:
+                        send_telegram("✅ Bot is running. Scanning every 30 seconds.", bot_token, chat_id)
+        except Exception as e:
+            log(f"Command listener error: {e}", "warning")
+            time.sleep(5)
+
+
+# ---------------------------------------------------------------------------
 # Persistence helpers
 # ---------------------------------------------------------------------------
 def save_recent_alert(project, country, skill_names):
@@ -586,7 +631,11 @@ def save_last_run(projects_checked, alerts_sent):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main():
+def main(bot_state=None):
+    if bot_state and bot_state.get("paused"):
+        log("Bot is paused — skipping scan.")
+        return
+
     log("=" * 55)
     log("RUNNING VERSION 2")
     log("Freelancer Monitor started")
@@ -765,6 +814,29 @@ def main():
 
 
 if __name__ == "__main__":
+    # Load settings once for startup message and command listener
+    _startup_settings = load_settings()
+    _tg_token = _startup_settings["telegram_bot_token"]
+    _tg_chat  = str(_startup_settings["telegram_chat_id"])
+
+    # Shared pause state
+    bot_state = {"paused": False}
+
+    # Send startup notification
+    send_telegram(
+        "🤖 Freelancer bot started. Send /status to check, /pause to pause.",
+        _tg_token, _tg_chat,
+    )
+
+    # Start Telegram command listener in background
+    _listener = threading.Thread(
+        target=telegram_command_listener,
+        args=(_tg_token, _tg_chat, bot_state),
+        daemon=True,
+    )
+    _listener.start()
+    log("Telegram command listener started (responds to /pause, /play, /status).")
+
     while True:
-        main()
+        main(bot_state)
         time.sleep(30)
