@@ -614,7 +614,7 @@ def main():
         # Extra client-side time guard (in case from_time isn't supported)
         ts = float(project.get("time_submitted") or 0)
         if ts and ts < cutoff_ts:
-            log(f"FILTERED [too_old] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)}")
+            log(f"FILTERED [too_old] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)}")
             continue
 
         # Country filter
@@ -626,29 +626,29 @@ def main():
 
         if not country_allowed(country_name, allowed):
             reason = "blocklist" if country_name.lower() in _BLOCKED_COUNTRIES else "not_allowed"
-            log(f"FILTERED [country/{reason}] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            log(f"FILTERED [country/{reason}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Currency filter — reject INR projects
         currency_code = (project.get("currency") or {}).get("code", "")
         if currency_code == "INR":
-            log(f"FILTERED [currency] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            log(f"FILTERED [currency] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Language filter — reject non-English projects
         if not is_english(project):
-            log(f"FILTERED [language] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            log(f"FILTERED [language] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Budget filter
         if not budget_ok(project, settings):
-            log(f"FILTERED [budget] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            log(f"FILTERED [budget] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # Skill keyword filter — client-side check on title + description
         matched_kw = keyword_match(project)
         if not matched_kw:
-            log(f"FILTERED [skill] [{proj_id}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            log(f"FILTERED [skill] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
             continue
 
         # All filters passed
