@@ -582,10 +582,13 @@ def main():
             headers={"Freelancer-OAuth-V1": token},
             timeout=10,
         ).json()
-        user_id = me.get("result", {}).get("id", "unknown")
-        log(f"Logged in as Freelancer user ID: {user_id}")
+        user_id = me.get("result", {}).get("id")
+        if user_id:
+            log(f"Logged in as Freelancer user ID: {user_id}")
+        else:
+            log("ERROR: Could not fetch Freelancer user ID — bids will fail. Check FREELANCER_TOKEN.", "error")
     except Exception as e:
-        log(f"Could not verify Freelancer token: {e}", "warning")
+        log(f"ERROR: Could not fetch Freelancer user ID — bids will fail. Check FREELANCER_TOKEN. ({e})", "error")
 
     # Load portfolio once at startup
     portfolio = load_json(PORTFOLIO_FILE, [])
