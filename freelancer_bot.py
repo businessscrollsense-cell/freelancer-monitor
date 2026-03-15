@@ -437,7 +437,10 @@ def draft_bid(project, skill_names, portfolio):
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
-        return next((b.text for b in response.content if b.type == "text"), None)
+        bid_text = next((b.text for b in response.content if b.type == "text"), None)
+        if bid_text:
+            bid_text = bid_text.replace("—", "-").replace("–", "-")
+        return bid_text
     except Exception as e:
         log(f"Bid drafting failed: {e}", "warning")
         return None
