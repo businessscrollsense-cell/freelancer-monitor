@@ -480,6 +480,8 @@ def parse_bid_error(response_json):
         return "Could not parse error response"
 
 
+BIDDER_ID = 83207744
+
 def submit_bid(project, bid_text, token):
     """Submit bid to Freelancer API. Returns (success, reason_string)."""
     proj_id = project.get("id")
@@ -490,9 +492,10 @@ def submit_bid(project, bid_text, token):
     try:
         resp = requests.post(
             "https://www.freelancer.com/api/projects/0.1/bids/",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Freelancer-OAuth-V1": token},
             json={
                 "project_id":           proj_id,
+                "bidder_id":            BIDDER_ID,
                 "amount":               amount,
                 "period":               7,
                 "milestone_percentage": 100,
