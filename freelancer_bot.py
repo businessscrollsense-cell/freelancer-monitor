@@ -720,11 +720,12 @@ def main(bot_state=None):
     jobs_dict = result.get("jobs", {})     or {}
     log(f"Received {len(projects)} project(s) from API")
 
-    # --- Process each project ---
+    # --- Pass 1: filter all projects ---
     new_seen    = dict(seen_ids)
     alerts_sent = 0
     now         = time.time()
     cutoff_ts   = now - (lookback * 60)  # client-side guard
+    qualified   = []  # (project, country_name, skill_names)
 
     for project in projects:
         proj_id = str(project.get("id", ""))
@@ -745,9 +746,9 @@ def main(bot_state=None):
             continue
 
         # Country filter
-        owner_id   = str(project.get("owner_id", ""))
-        owner      = users.get(owner_id) or {}
-        location   = (owner.get("location") or {})
+        owner_id    = str(project.get("owner_id", ""))
+        owner       = users.get(owner_id) or {}
+        location    = (owner.get("location") or {})
         country_obj = (location.get("country") or {})
         country_name = country_obj.get("name", "") or ""
 
@@ -785,10 +786,22 @@ def main(bot_state=None):
             f"budget={fmt_budget(project)} country=\"{country_name}\" "
             f"keyword=\"{matched_kw}\""
         )
+        qualified.append((project, country_name, skill_names))
 
-        title  = project.get("title", "N/A")
-        budget = fmt_budget(project)
-        link   = project_link(project)
+    # --- Pass 2: draft and submit bids ---
+    total = len(qualified)
+    for bid_num, (project, country_name, skill_names) in enumerate(qualified, 1):
+        proj_id = str(project.get("id", ""))
+        title   = project.get("title", "N/A")
+        budget  = fmt_budget(project)
+        link    = project_link(project)
+
+        # Delay between bids — first one fires immediately
+        if bid_num == 1:
+            log(f"Bid {bid_num} of {total} — submitting immediately")
+        else:
+            log(f"Bid {bid_num} of {total} — waiting 30 seconds first...")
+            time.sleep(30)
 
         # Calculate bid amount (70% of max budget)
         amount, amount_label = calc_bid_amount(project)
@@ -804,15 +817,16 @@ def main(bot_state=None):
             continue
         log_portfolio_chosen(bid, portfolio)
 
-        # Submit bid to Freelancer
+        # Submit bid — retry once on TOO_FAST
         success, error = submit_bid(project, bid, amount, token)
-
-        # "Bidding too fast" — skip without permanent failure; will retry next scan
         if error == "TOO_FAST":
-            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — bidding too fast, will retry next scan.", "warning")
-            # Remove from seen so it's retried next cycle
-            new_seen.pop(proj_id, None)
-            continue
+            log("Bidding too fast — waiting 45 seconds and retrying once...", "warning")
+            time.sleep(45)
+            success, error = submit_bid(project, bid, amount, token)
+            if error == "TOO_FAST":
+                log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — still too fast after retry, will retry next scan.", "warning")
+                new_seen.pop(proj_id, None)
+                continue
 
         SEP = "\u2500" * 25
         if success:
@@ -842,9 +856,6 @@ def main(bot_state=None):
         if send_telegram(tg_msg, tg_token, tg_chat):
             save_recent_alert(project, country_name, skill_names)
             alerts_sent += 1
-
-        log("Waiting 60 seconds before next bid to avoid rate limiting...")
-        time.sleep(60)
 
     # --- Persist state ---
     cleaned = cleanup_and_save(new_seen)
