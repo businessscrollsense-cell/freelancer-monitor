@@ -361,6 +361,8 @@ BID_SYSTEM_TEMPLATE = (
     "based on the job description and reference them naturally in the bid. Only include "
     "portfolio URLs that are genuinely relevant. Vary your selections — do not always "
     "pick the same project. Return only the bid text, no commentary.\n\n"
+    "Your bids must be between 80 and 120 words maximum. Not a word more. Be punchy and "
+    "concise. Every sentence must earn its place. Cut anything that can be implied.\n\n"
     "Portfolio:\n{portfolio}"
 )
 
@@ -398,7 +400,7 @@ End with one natural sentence inviting next steps based on what this specific cl
 Sign-off: Regards, Anne S.
 
 STYLE RULES:
-* 100-150 words total, not including sign-off and links
+* 80-120 words total, not including sign-off and links
 * No bullet points or lists in the body copy
 * No greetings, no flattery, no filler phrases like I would love to help or I am perfect for this
 * No generic claims — every sentence specific to this project
@@ -432,17 +434,46 @@ def draft_bid(project, skill_names, portfolio):
         skills=skills_str,
     )
 
+    def clean(text):
+        return text.replace("—", "-").replace("–", "-").replace("* http", "- http")
+
+    def word_count(text):
+        return len(text.split())
+
     try:
         client   = anthropic_sdk.Anthropic(api_key=api_key)
+        messages = [{"role": "user", "content": user_prompt}]
         response = client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=600,
             system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=messages,
         )
         bid_text = next((b.text for b in response.content if b.type == "text"), None)
-        if bid_text:
-            bid_text = bid_text.replace("—", "-").replace("–", "-").replace("* http", "- http")
+        if not bid_text:
+            return None
+        bid_text = clean(bid_text)
+
+        wc = word_count(bid_text)
+        if wc > 120:
+            log(f"Bid too long ({wc} words) — asking Claude to trim.")
+            messages.append({"role": "assistant", "content": bid_text})
+            messages.append({"role": "user", "content": (
+                "This bid is too long. Trim it to under 120 words while keeping the hook, "
+                "the relevant experience, the portfolio links, and the sign-off. "
+                "Remove any sentence that isn't essential."
+            )})
+            response = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=600,
+                system=system_prompt,
+                messages=messages,
+            )
+            bid_text = next((b.text for b in response.content if b.type == "text"), bid_text)
+            bid_text = clean(bid_text)
+            wc = word_count(bid_text)
+
+        log(f"Bid written: {wc} words")
         return bid_text
     except Exception as e:
         log(f"Bid drafting failed: {e}", "warning")
