@@ -501,7 +501,9 @@ def parse_bid_error(response_json):
         error_code = response_json.get("error_code", "")
         combined   = f"{status} {message} {error_code}".lower()
 
-        if "nda" in combined:
+        if "too fast" in combined or "rate" in combined or "throttl" in combined or "slow down" in combined:
+            return "TOO_FAST"
+        elif "nda" in combined:
             return "NDA signature required — bid manually"
         elif "preferred" in combined:
             return "Preferred bidders only — bid manually if qualified"
@@ -805,6 +807,13 @@ def main(bot_state=None):
         # Submit bid to Freelancer
         success, error = submit_bid(project, bid, amount, token)
 
+        # "Bidding too fast" — skip without permanent failure; will retry next scan
+        if error == "TOO_FAST":
+            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — bidding too fast, will retry next scan.", "warning")
+            # Remove from seen so it's retried next cycle
+            new_seen.pop(proj_id, None)
+            continue
+
         SEP = "\u2500" * 25
         if success:
             tg_msg = (
@@ -834,7 +843,8 @@ def main(bot_state=None):
             save_recent_alert(project, country_name, skill_names)
             alerts_sent += 1
 
-        time.sleep(2)  # Avoid rate limiting between bids
+        log("Waiting 60 seconds before next bid to avoid rate limiting...")
+        time.sleep(60)
 
     # --- Persist state ---
     cleaned = cleanup_and_save(new_seen)
