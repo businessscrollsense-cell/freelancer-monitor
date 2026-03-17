@@ -124,18 +124,16 @@ def cleanup_and_save(seen_ids):
 # ---------------------------------------------------------------------------
 # Fetch projects from Freelancer API
 # ---------------------------------------------------------------------------
-def fetch_projects(lookback_minutes, token):
-    """Retrieve the 50 most recent active projects, no server-side skill filter."""
-    from_time = int(time.time()) - (lookback_minutes * 60)
-    headers   = {"Authorization": f"Bearer {token}"}
-    params    = [
-        ("limit",        50),
-        ("sort_field",   "time_submitted"),
-        ("sort_order",   "desc"),
+def fetch_projects(token):
+    """Retrieve the 100 most recent active projects, no server-side skill filter."""
+    headers = {"Freelancer-OAuth-V1": token}
+    params  = [
+        ("limit",            100),
+        ("sort_field",       "time_submitted"),
+        ("sort_order",       "desc"),
         ("full_description", "true"),
-        ("job_details",  "true"),
-        ("user_details", "true"),
-        ("from_time",    from_time),
+        ("job_details",      "true"),
+        ("user_details",     "true"),
     ]
     try:
         resp = requests.get(
@@ -678,7 +676,6 @@ def main(bot_state=None):
     token    = settings["freelancer_token"]
     tg_token = settings["telegram_bot_token"]
     tg_chat  = str(settings["telegram_chat_id"])
-    lookback = int(settings.get("lookback_minutes", 10))
     allowed  = build_country_set(settings)
 
     # --- Verify Freelancer token ---
@@ -707,8 +704,8 @@ def main(bot_state=None):
     log(f"Loaded {len(seen_ids)} previously seen project IDs")
 
     # --- Fetch from Freelancer (no server-side skill filter) ---
-    log(f"Fetching projects posted in the last {lookback} minutes…")
-    result = fetch_projects(lookback, token)
+    log("Fetching 100 most recent projects…")
+    result = fetch_projects(token)
 
     if not result:
         log("No result from Freelancer API. Will try again next run.")
@@ -724,28 +721,27 @@ def main(bot_state=None):
     new_seen    = dict(seen_ids)
     alerts_sent = 0
     now         = time.time()
-    cutoff_ts   = now - (lookback * 60)  # client-side guard
     qualified   = []  # (project, country_name, skill_names)
+
+    counts = {"seen": 0, "currency": 0, "country": 0, "language": 0, "budget": 0, "skill": 0}
 
     for project in projects:
         proj_id = str(project.get("id", ""))
         if not proj_id:
             continue
 
+        title_short = f"\"{project.get('title', '')[:60]}\""
+
         # Always mark as seen regardless of filters (prevents re-processing)
         new_seen[proj_id] = now
 
         # Skip already seen
         if proj_id in seen_ids:
+            counts["seen"] += 1
+            log(f"FILTERED [seen] {title_short}")
             continue
 
-        # Extra client-side time guard (in case from_time isn't supported)
-        ts = float(project.get("time_submitted") or 0)
-        if ts and ts < cutoff_ts:
-            log(f"FILTERED [too_old] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)}")
-            continue
-
-        # Country filter
+        # Country filter (resolve early — needed for other log lines too)
         owner_id    = str(project.get("owner_id", ""))
         owner       = users.get(owner_id) or {}
         location    = (owner.get("location") or {})
@@ -753,30 +749,34 @@ def main(bot_state=None):
         country_name = country_obj.get("name", "") or ""
 
         if not country_allowed(country_name, allowed):
-            reason = "blocklist" if country_name.lower() in _BLOCKED_COUNTRIES else "not_allowed"
-            log(f"FILTERED [country/{reason}] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            counts["country"] += 1
+            log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
             continue
 
         # Currency filter — reject INR projects
         currency_code = (project.get("currency") or {}).get("code", "")
         if currency_code == "INR":
-            log(f"FILTERED [currency] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            counts["currency"] += 1
+            log(f"FILTERED [currency] {title_short} budget={fmt_budget(project)}")
             continue
 
         # Language filter — reject non-English projects
         if not is_english(project):
-            log(f"FILTERED [language] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            counts["language"] += 1
+            log(f"FILTERED [language] {title_short} country=\"{country_name}\"")
             continue
 
         # Budget filter
         if not budget_ok(project, settings):
-            log(f"FILTERED [budget] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            counts["budget"] += 1
+            log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
             continue
 
         # Skill keyword filter — client-side check on title + description
         matched_kw = keyword_match(project)
         if not matched_kw:
-            log(f"FILTERED [skill] \"{project.get('title', '')[:60]}\" budget={fmt_budget(project)} country=\"{country_name}\"")
+            counts["skill"] += 1
+            log(f"FILTERED [skill] {title_short}")
             continue
 
         # All filters passed
@@ -787,6 +787,17 @@ def main(bot_state=None):
             f"keyword=\"{matched_kw}\""
         )
         qualified.append((project, country_name, skill_names))
+
+    log(
+        f"Scan summary — checked {len(projects)} | "
+        f"seen: {counts['seen']} | "
+        f"country: {counts['country']} | "
+        f"currency: {counts['currency']} | "
+        f"language: {counts['language']} | "
+        f"budget: {counts['budget']} | "
+        f"skill: {counts['skill']} | "
+        f"sent to Claude: {len(qualified)}"
+    )
 
     # --- Pass 2: draft and submit bids ---
     total = len(qualified)
