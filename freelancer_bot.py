@@ -361,6 +361,8 @@ BID_SYSTEM_TEMPLATE = (
     "pick the same project. Return only the bid text, no commentary.\n\n"
     "Your bids must be between 80 and 120 words maximum. Not a word more. Be punchy and "
     "concise. Every sentence must earn its place. Cut anything that can be implied.\n\n"
+    "Do not use em dashes, en dashes, or hyphens anywhere in the bid text under any "
+    "circumstances. Rewrite any sentence that would require a dash.\n\n"
     "Portfolio:\n{portfolio}"
 )
 
@@ -433,7 +435,14 @@ def draft_bid(project, skill_names, portfolio):
     )
 
     def clean(text):
-        return text.replace("—", "-").replace("–", "-").replace("* http", "- http")
+        return (
+            text
+            .replace("—", "-")
+            .replace("–", "-")
+            .replace(" - ", " ")
+            .replace("- ", "")
+            .replace("* http", "- http")
+        )
 
     def word_count(text):
         return len(text.split())
