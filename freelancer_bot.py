@@ -37,7 +37,7 @@ LAST_RUN_FILE   = os.path.join(SCRIPT_DIR, "last_run.json")
 LOG_FILE        = os.path.join(SCRIPT_DIR, "bot.log")
 
 FREELANCER_API  = "https://www.freelancer.com/api/projects/0.1"
-ID_RETENTION    = 7 * 24 * 3600  # Keep seen IDs for 7 days
+ID_RETENTION    = 3 * 24 * 3600  # Keep seen IDs for 3 days
 
 # ---------------------------------------------------------------------------
 # Logging — writes to bot.log alongside the script
@@ -128,7 +128,7 @@ def fetch_projects(token):
     """Retrieve the 100 most recent active projects, no server-side skill filter."""
     headers = {"Freelancer-OAuth-V1": token}
     params  = [
-        ("limit",            100),
+        ("limit",            50),
         ("sort_field",       "time_submitted"),
         ("sort_order",       "desc"),
         ("full_description", "true"),
@@ -718,6 +718,8 @@ def main(bot_state=None):
     log(f"Received {len(projects)} project(s) from API")
 
     # --- Pass 1: filter all projects ---
+    # new_seen starts as a copy of old seen_ids; new entries are added only at
+    # decision points (filter rejection or completed bid attempt).
     new_seen    = dict(seen_ids)
     alerts_sent = 0
     now         = time.time()
@@ -732,10 +734,7 @@ def main(bot_state=None):
 
         title_short = f"\"{project.get('title', '')[:60]}\""
 
-        # Always mark as seen regardless of filters (prevents re-processing)
-        new_seen[proj_id] = now
-
-        # Skip already seen
+        # Skip already seen (timestamp already in new_seen via dict copy)
         if proj_id in seen_ids:
             counts["seen"] += 1
             log(f"FILTERED [seen] {title_short}")
@@ -750,6 +749,7 @@ def main(bot_state=None):
 
         if not country_allowed(country_name, allowed):
             counts["country"] += 1
+            new_seen[proj_id] = now
             log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
             continue
 
@@ -757,18 +757,21 @@ def main(bot_state=None):
         currency_code = (project.get("currency") or {}).get("code", "")
         if currency_code == "INR":
             counts["currency"] += 1
+            new_seen[proj_id] = now
             log(f"FILTERED [currency] {title_short} budget={fmt_budget(project)}")
             continue
 
         # Language filter — reject non-English projects
         if not is_english(project):
             counts["language"] += 1
+            new_seen[proj_id] = now
             log(f"FILTERED [language] {title_short} country=\"{country_name}\"")
             continue
 
         # Budget filter
         if not budget_ok(project, settings):
             counts["budget"] += 1
+            new_seen[proj_id] = now
             log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
             continue
 
@@ -776,10 +779,11 @@ def main(bot_state=None):
         matched_kw = keyword_match(project)
         if not matched_kw:
             counts["skill"] += 1
+            new_seen[proj_id] = now
             log(f"FILTERED [skill] {title_short}")
             continue
 
-        # All filters passed
+        # All filters passed — do NOT mark seen yet; that happens after the bid attempt
         skill_names = get_skill_names(project, jobs_dict)
         log(
             f"PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
@@ -787,6 +791,9 @@ def main(bot_state=None):
             f"keyword=\"{matched_kw}\""
         )
         qualified.append((project, country_name, skill_names))
+
+    if counts["seen"] > 40:
+        log("WARNING: Most projects already seen — waiting for new postings", "warning")
 
     log(
         f"Scan summary — checked {len(projects)} | "
@@ -836,8 +843,11 @@ def main(bot_state=None):
             success, error = submit_bid(project, bid, amount, token)
             if error == "TOO_FAST":
                 log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — still too fast after retry, will retry next scan.", "warning")
-                new_seen.pop(proj_id, None)
+                # Do NOT mark seen — let it retry next scan
                 continue
+
+        # Mark seen now that the bid attempt is complete (success or permanent failure)
+        new_seen[proj_id] = now
 
         SEP = "\u2500" * 25
         if success:
