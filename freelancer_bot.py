@@ -972,6 +972,9 @@ def main(bot_state=None):
             continue
         log(f"Bid amount calculated: {amount_label}")
 
+        # Confirmed: eligibility passed, amount known — safe to call Claude
+        log(f"Eligibility check passed for \"{title[:60]}\" — calling Claude now")
+
         # Draft bid with Claude
         bid = draft_bid(project, skill_names, portfolio)
         if not bid:
