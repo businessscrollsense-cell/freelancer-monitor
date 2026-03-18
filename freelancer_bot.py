@@ -498,6 +498,69 @@ def log_portfolio_chosen(bid_text, portfolio):
 
 
 # ---------------------------------------------------------------------------
+# Pre-bid eligibility check
+# ---------------------------------------------------------------------------
+def fetch_my_skill_ids(token):
+    """Fetch Anne's registered skill IDs from the Freelancer API at startup."""
+    try:
+        resp = requests.get(
+            "https://www.freelancer.com/api/users/0.1/self/",
+            headers={"Freelancer-OAuth-V1": token},
+            params={"skill_details": "true"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            log(f"Could not fetch skill IDs ({resp.status_code}) — skill check disabled.", "warning")
+            return set()
+        skills = resp.json().get("result", {}).get("jobs", []) or []
+        ids = {str(s.get("id")) for s in skills if s.get("id")}
+        names = [s.get("name", "") for s in skills if s.get("name")]
+        log(f"Registered skills ({len(ids)}): {', '.join(sorted(names))}")
+        return ids
+    except Exception as e:
+        log(f"Could not fetch skill IDs: {e} — skill check disabled.", "warning")
+        return set()
+
+
+def check_project_eligibility(project_id, token, my_skill_ids):
+    """GET full project details and check for bid blockers before calling Claude.
+
+    Returns (eligible: bool, reason: str | None).
+    Reason is a short human-readable string when ineligible, None when eligible.
+    """
+    try:
+        resp = requests.get(
+            f"{FREELANCER_API}/projects/{project_id}/",
+            headers={"Freelancer-OAuth-V1": token},
+            params={"full_description": "true", "job_details": "true"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            log(f"Pre-bid check failed ({resp.status_code}) for {project_id} — allowing through.", "warning")
+            return True, None
+
+        proj = resp.json().get("result", {}) or {}
+        upgrades = proj.get("upgrades", {}) or {}
+
+        # Check 1: sealed / NDA / preferred-bidder restrictions
+        if upgrades.get("sealed") or upgrades.get("NDA"):
+            return False, "Preferred bidders only"
+
+        # Check 2: required skills the bidder doesn't have
+        if my_skill_ids:
+            required_jobs = proj.get("jobs", []) or []
+            required_ids  = {str(j.get("id")) for j in required_jobs if j.get("id")}
+            missing = required_ids - my_skill_ids
+            if missing:
+                return False, f"Missing required skills (IDs: {', '.join(sorted(missing))})"
+
+        return True, None
+    except Exception as e:
+        log(f"Pre-bid eligibility check error for {project_id}: {e} — allowing through.", "warning")
+        return True, None
+
+
+# ---------------------------------------------------------------------------
 # Bid submission via Freelancer API
 # ---------------------------------------------------------------------------
 def parse_bid_error(response_json):
@@ -687,18 +750,25 @@ def main(bot_state=None):
     tg_chat  = str(settings["telegram_chat_id"])
     allowed  = build_country_set(settings)
 
-    # --- Verify Freelancer token ---
+    # --- Verify Freelancer token and fetch registered skills ---
+    my_skill_ids = set()
     try:
         me = requests.get(
             "https://www.freelancer.com/api/users/0.1/self/",
             headers={"Freelancer-OAuth-V1": token},
+            params={"skill_details": "true"},
             timeout=10,
         ).json()
-        user_id = me.get("result", {}).get("id")
+        result = me.get("result", {}) or {}
+        user_id = result.get("id")
         if user_id:
             log(f"Logged in as Freelancer user ID: {user_id}")
         else:
             log("ERROR: Could not fetch Freelancer user ID — bids will fail. Check FREELANCER_TOKEN.", "error")
+        skills = result.get("jobs", []) or []
+        my_skill_ids = {str(s.get("id")) for s in skills if s.get("id")}
+        skill_names  = [s.get("name", "") for s in skills if s.get("name")]
+        log(f"Registered skills ({len(my_skill_ids)}): {', '.join(sorted(skill_names))}")
     except Exception as e:
         log(f"ERROR: Could not fetch Freelancer user ID — bids will fail. Check FREELANCER_TOKEN. ({e})", "error")
 
@@ -830,6 +900,14 @@ def main(bot_state=None):
             log(f"Bid {bid_num} of {total} — waiting 30 seconds first...")
             time.sleep(30)
 
+        # Pre-bid eligibility check (avoids wasting Claude credits)
+        eligible, reason = check_project_eligibility(proj_id, token, my_skill_ids)
+        if not eligible:
+            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — {reason}")
+            new_seen[proj_id] = now
+            send_telegram(f"⛔ SKIPPED - {reason}:\n{title}\n{link}", tg_token, tg_chat)
+            continue
+
         # Calculate bid amount (70% of max budget)
         amount, amount_label = calc_bid_amount(project)
         if amount is None:
@@ -889,7 +967,7 @@ def main(bot_state=None):
 
     # --- Persist state ---
     cleaned = cleanup_and_save(new_seen)
-    log(f"Saved {len(cleaned)} seen IDs (after 7-day cleanup)")
+    log(f"Saved {len(cleaned)} seen IDs (after 3-day cleanup)")
     log(f"Done — checked {len(projects)}, sent {alerts_sent} alert(s).")
 
     save_last_run(len(projects), alerts_sent)
