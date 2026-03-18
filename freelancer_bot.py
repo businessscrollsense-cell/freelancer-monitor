@@ -184,6 +184,46 @@ _SKILL_KEYWORDS = {
     "mobile app", "swift", "ios", "android",
 }
 
+BLOCKLIST_KEYWORDS = [
+    "cold call", "cold caller", "appointment setter", "appointment setting",
+    "telemarketing", "telesales", "outbound call", "phone call", "mass messaging",
+    "whatsapp blast", "sms blast", "lead generation", "sales rep", "sales representative",
+    "closer", "commission only", "commission-only", "results-based pay",
+    "data entry", "copy paste", "copy-paste", "excel data", "web scraping",
+    "scrape", "scraper", "virtual assistant", "va needed", "personal assistant",
+    "customer support", "customer service", "live chat", "chat support",
+    "bookkeeping", "accounting", "payroll", "tax", "logo design", "graphic design",
+    "video edit", "video editing", "youtube", "tiktok", "instagram reel",
+    "translations", "translator", "transcription", "proofreading",
+]
+
+_INDIA_PHRASES = [
+    "inr", "₹", "prayagraj", "looking for indian", "indian developer",
+    "india based", "india only", "from india", "based in india",
+]
+
+
+def blocklist_match(project):
+    """Return the first matching blocklist keyword, or None."""
+    text = " ".join([
+        project.get("title", "") or "",
+        project.get("description", "") or "",
+    ]).lower()
+    for kw in BLOCKLIST_KEYWORDS:
+        if kw in text:
+            return kw
+    return None
+
+
+def is_india_project(project):
+    """Return True if description text suggests an India-based client."""
+    text = " ".join([
+        project.get("title", "") or "",
+        project.get("description", "") or "",
+    ]).lower()
+    return any(phrase in text for phrase in _INDIA_PHRASES)
+
+
 def build_country_set(settings):
     """Return a lowercase set of allowed country names."""
     countries = settings.get("countries", [])
@@ -804,7 +844,7 @@ def main(bot_state=None):
     now         = time.time()
     qualified   = []  # (project, country_name, skill_names)
 
-    counts = {"seen": 0, "currency": 0, "country": 0, "language": 0, "budget": 0, "skill": 0}
+    counts = {"seen": 0, "currency": 0, "country": 0, "india": 0, "language": 0, "budget": 0, "blocklist": 0, "skill": 0}
 
     for project in projects:
         proj_id = str(project.get("id", ""))
@@ -854,6 +894,21 @@ def main(bot_state=None):
             log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
             continue
 
+        # India content filter — catches India-based clients with blank country field
+        if is_india_project(project):
+            counts["india"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [india] {title_short}")
+            continue
+
+        # Blocklist filter — rejects irrelevant job types before skill check
+        blocked_kw = blocklist_match(project)
+        if blocked_kw:
+            counts["blocklist"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [blocklist] {title_short} keyword=\"{blocked_kw}\"")
+            continue
+
         # Skill keyword filter — client-side check on title + description
         matched_kw = keyword_match(project)
         if not matched_kw:
@@ -879,8 +934,10 @@ def main(bot_state=None):
         f"seen: {counts['seen']} | "
         f"country: {counts['country']} | "
         f"currency: {counts['currency']} | "
+        f"india: {counts['india']} | "
         f"language: {counts['language']} | "
         f"budget: {counts['budget']} | "
+        f"blocklist: {counts['blocklist']} | "
         f"skill: {counts['skill']} | "
         f"sent to Claude: {len(qualified)}"
     )
