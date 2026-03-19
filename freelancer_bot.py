@@ -566,7 +566,7 @@ def check_project_eligibility(project_id, token, my_skill_ids):
     """GET full project details and check for bid blockers before calling Claude.
 
     Returns (eligible: bool, reason: str | None).
-    Reason is a short human-readable string when ineligible, None when eligible.
+    Reasons prefixed with "SILENT:" are logged but do NOT trigger a Telegram message.
     """
     try:
         resp = requests.get(
@@ -576,17 +576,22 @@ def check_project_eligibility(project_id, token, my_skill_ids):
             timeout=10,
         )
         if resp.status_code != 200:
-            log(f"Pre-bid check failed ({resp.status_code}) for {project_id} — allowing through.", "warning")
-            return True, None
+            log(f"Pre-bid check failed ({resp.status_code}) for {project_id} — blocking to avoid wasted Claude call.", "warning")
+            return False, "SILENT:Pre-bid API check failed"
 
         proj = resp.json().get("result", {}) or {}
         upgrades = proj.get("upgrades", {}) or {}
 
-        # Check 1: sealed / NDA / preferred-bidder restrictions
+        # Check 1: non-English language field (silent — already filtered by language pass, but API may differ)
+        lang = (proj.get("language") or "").strip().lower()
+        if lang and lang != "en":
+            return False, f"SILENT:Non-English project (language={lang})"
+
+        # Check 2: sealed / NDA / preferred-bidder restrictions
         if upgrades.get("sealed") or upgrades.get("NDA"):
             return False, "Preferred bidders only"
 
-        # Check 2: required skills the bidder doesn't have
+        # Check 3: required skills the bidder doesn't have
         if my_skill_ids:
             required_jobs = proj.get("jobs", []) or []
             required_ids  = {str(j.get("id")) for j in required_jobs if j.get("id")}
@@ -596,8 +601,8 @@ def check_project_eligibility(project_id, token, my_skill_ids):
 
         return True, None
     except Exception as e:
-        log(f"Pre-bid eligibility check error for {project_id}: {e} — allowing through.", "warning")
-        return True, None
+        log(f"Pre-bid eligibility check error for {project_id}: {e} — blocking to avoid wasted Claude call.", "warning")
+        return False, "SILENT:Pre-bid check exception"
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +618,8 @@ def parse_bid_error(response_json):
 
         if "too fast" in combined or "rate" in combined or "throttl" in combined or "slow down" in combined:
             return "TOO_FAST"
+        elif "language" in combined or "different language" in combined or "wrong language" in combined:
+            return "WRONG_LANGUAGE"
         elif "nda" in combined:
             return "NDA signature required — bid manually"
         elif "preferred" in combined:
@@ -957,12 +964,15 @@ def main(bot_state=None):
             log(f"Bid {bid_num} of {total} — waiting 30 seconds first...")
             time.sleep(30)
 
-        # Pre-bid eligibility check (avoids wasting Claude credits)
+        # Pre-bid eligibility check — MUST pass before Claude is called
         eligible, reason = check_project_eligibility(proj_id, token, my_skill_ids)
         if not eligible:
-            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — {reason}")
+            silent = reason.startswith("SILENT:")
+            display_reason = reason[7:] if silent else reason
+            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — {display_reason}")
             new_seen[proj_id] = now
-            send_telegram(f"⛔ SKIPPED - {reason}:\n{title}\n{link}", tg_token, tg_chat)
+            if not silent:
+                send_telegram(f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}", tg_token, tg_chat)
             continue
 
         # Calculate bid amount (70% of max budget)
@@ -984,6 +994,11 @@ def main(bot_state=None):
 
         # Submit bid — retry once on TOO_FAST
         success, error = submit_bid(project, bid, amount, token)
+        if error == "WRONG_LANGUAGE":
+            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — wrong language (API rejection)", "warning")
+            new_seen[proj_id] = now
+            send_telegram(f"⛔ SKIPPED - Wrong language: {title}", tg_token, tg_chat)
+            continue
         if error == "TOO_FAST":
             log("Bidding too fast — waiting 45 seconds and retrying once...", "warning")
             time.sleep(45)
