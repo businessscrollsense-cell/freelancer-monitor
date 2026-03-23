@@ -657,7 +657,7 @@ def parse_bid_error(response_json):
         elif "not enough bids" in combined or "no bids" in combined:
             return "Out of bids — top up Freelancer account"
         elif "already bid" in combined or "duplicate" in combined:
-            return "Already bid on this project"
+            return "ALREADY_BID"
         elif "closed" in combined or "expired" in combined:
             return "Project closed or expired"
         elif "not allowed" in combined or "enotallowed" in combined:
@@ -965,13 +965,17 @@ def main(bot_state=None):
             log(f"FILTERED [skill] {title_short}")
             continue
 
-        # All filters passed — do NOT mark seen yet; that happens after the bid attempt
+        # All filters passed — mark seen and persist to disk immediately so a crash
+        # mid-bid never causes a duplicate attempt on the next scan.
         skill_names = get_skill_names(project, jobs_dict)
         log(
             f"PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
             f"budget={fmt_budget(project)} country=\"{country_name}\" "
             f"keyword=\"{matched_kw}\""
         )
+        new_seen[proj_id] = now
+        cleanup_and_save(new_seen)
+        log(f"Marked seen immediately: \"{project.get('title', '')[:60]}\"")
         qualified.append((project, country_name, skill_names))
 
     if counts["seen"] > 40:
@@ -1037,9 +1041,11 @@ def main(bot_state=None):
 
         # Submit bid — retry once on TOO_FAST
         success, error = submit_bid(project, bid, amount, token)
+        if error == "ALREADY_BID":
+            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — already bid (silent, no Telegram)")
+            continue  # already marked seen before Claude was called
         if error == "WRONG_LANGUAGE":
             log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — wrong language (API rejection)", "warning")
-            new_seen[proj_id] = now
             send_telegram(f"⛔ SKIPPED - Wrong language: {title}", tg_token, tg_chat)
             continue
         if error == "TOO_FAST":
