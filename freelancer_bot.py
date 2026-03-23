@@ -157,7 +157,7 @@ def fetch_projects(token):
 _BLOCKED_COUNTRIES = {
     "nigeria", "india", "pakistan", "bangladesh", "indonesia",
     "philippines", "vietnam", "nepal", "sri lanka", "ghana",
-    "kenya", "ethiopia",
+    "kenya", "ethiopia", "egypt", "myanmar", "cambodia",
 }
 
 _SKILL_KEYWORDS = {
@@ -185,16 +185,29 @@ _SKILL_KEYWORDS = {
 }
 
 BLOCKLIST_KEYWORDS = [
+    # Sales / outreach
     "cold call", "cold caller", "appointment setter", "appointment setting",
     "telemarketing", "telesales", "outbound call", "phone call", "mass messaging",
     "whatsapp blast", "sms blast", "lead generation", "sales rep", "sales representative",
     "closer", "commission only", "commission-only", "results-based pay",
+    # Data / admin
     "data entry", "copy paste", "copy-paste", "excel data", "web scraping",
     "scrape", "scraper", "virtual assistant", "va needed", "personal assistant",
+    # Support
     "customer support", "customer service", "live chat", "chat support",
-    "bookkeeping", "accounting", "payroll", "tax", "logo design", "graphic design",
-    "video edit", "video editing", "youtube", "tiktok", "instagram reel",
+    # Finance / legal
+    "bookkeeping", "accounting", "payroll", "tax",
+    "stock investment", "investment guidance", "financial advisor",
+    # Design / media
+    "logo design", "graphic design", "logo",
+    "video creation", "video edit", "video editing",
+    "image edit", "background removal", "photo edit", "photoshop", "illustrator",
+    "youtube", "tiktok", "instagram reel",
+    # Writing / translation
+    "content creation", "copywriting", "article writing", "blog writing",
     "translations", "translator", "transcription", "proofreading",
+    # Security / misc
+    "pen test", "penetration test", "security audit", "geopolitical",
 ]
 
 _INDIA_PHRASES = [
@@ -321,6 +334,8 @@ def is_english(project):
 
     return True
 
+MIN_HOURLY_RATE = 15  # Reject hourly projects paying less than this
+
 def budget_ok(project, settings):
     p_type   = project.get("type", "fixed")
     budget   = project.get("budget", {}) or {}
@@ -328,8 +343,9 @@ def budget_ok(project, settings):
     max_b    = float(budget.get("maximum") or 0)
 
     if p_type == "hourly":
-        # Include all hourly projects regardless of rate
-        return True
+        # Reject if max hourly rate is below minimum (use max if set, else min)
+        effective_hourly = max_b if max_b else min_b
+        return effective_hourly >= MIN_HOURLY_RATE
 
     # For fixed projects use the higher budget bound if available
     effective = max(min_b, max_b) if max_b else min_b
@@ -572,26 +588,38 @@ def check_project_eligibility(project_id, token, my_skill_ids):
         resp = requests.get(
             f"{FREELANCER_API}/projects/{project_id}/",
             headers={"Freelancer-OAuth-V1": token},
-            params={"full_description": "true", "job_details": "true"},
+            params={"full_description": "true", "job_details": "true", "user_details": "true"},
             timeout=10,
         )
         if resp.status_code != 200:
             log(f"Pre-bid check failed ({resp.status_code}) for {project_id} — blocking to avoid wasted Claude call.", "warning")
             return False, "SILENT:Pre-bid API check failed"
 
-        proj = resp.json().get("result", {}) or {}
+        data     = resp.json().get("result", {}) or {}
+        proj     = data if "upgrades" in data else (data.get("project") or data)
         upgrades = proj.get("upgrades", {}) or {}
 
-        # Check 1: non-English language field (silent — already filtered by language pass, but API may differ)
+        # Check 1: client country from project details (catches mismatches with bulk fetch)
+        users_detail = data.get("users", {}) or {}
+        owner_id_str = str(proj.get("owner_id", ""))
+        owner_detail = users_detail.get(owner_id_str) or {}
+        client_country = (
+            (owner_detail.get("location") or {})
+            .get("country", {}) or {}
+        ).get("name", "") or ""
+        if client_country and client_country.lower() in _BLOCKED_COUNTRIES:
+            return False, f"SILENT:Blocked country from project details ({client_country})"
+
+        # Check 2: non-English language field
         lang = (proj.get("language") or "").strip().lower()
         if lang and lang != "en":
             return False, f"SILENT:Non-English project (language={lang})"
 
-        # Check 2: sealed / NDA / preferred-bidder restrictions
+        # Check 3: sealed / NDA / preferred-bidder restrictions
         if upgrades.get("sealed") or upgrades.get("NDA"):
             return False, "Preferred bidders only"
 
-        # Check 3: required skills the bidder doesn't have
+        # Check 4: required skills the bidder doesn't have
         if my_skill_ids:
             required_jobs = proj.get("jobs", []) or []
             required_ids  = {str(j.get("id")) for j in required_jobs if j.get("id")}
@@ -851,7 +879,8 @@ def main(bot_state=None):
     now         = time.time()
     qualified   = []  # (project, country_name, skill_names)
 
-    counts = {"seen": 0, "currency": 0, "country": 0, "india": 0, "language": 0, "budget": 0, "blocklist": 0, "skill": 0}
+    counts = {"seen": 0, "currency": 0, "country": 0, "india": 0, "language": 0, "budget": 0, "new_client": 0, "blocklist": 0, "skill": 0}
+    six_months_ago = now - (180 * 24 * 3600)
 
     for project in projects:
         proj_id = str(project.get("id", ""))
@@ -901,6 +930,18 @@ def main(bot_state=None):
             log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
             continue
 
+        # Client quality filter — reject brand-new accounts with zero history
+        rep      = (owner.get("employer_reputation") or {})
+        history  = (rep.get("entire_history") or {})
+        complete = int(history.get("complete") or 0)
+        reviews  = int(history.get("reviews") or 0)
+        reg_date = float(owner.get("registration_date") or 0)
+        if complete == 0 and reviews == 0 and reg_date > 0 and reg_date > six_months_ago:
+            counts["new_client"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [new client - no history] {title_short} country=\"{country_name}\"")
+            continue
+
         # India content filter — catches India-based clients with blank country field
         if is_india_project(project):
             counts["india"] += 1
@@ -944,6 +985,7 @@ def main(bot_state=None):
         f"india: {counts['india']} | "
         f"language: {counts['language']} | "
         f"budget: {counts['budget']} | "
+        f"new_client: {counts['new_client']} | "
         f"blocklist: {counts['blocklist']} | "
         f"skill: {counts['skill']} | "
         f"sent to Claude: {len(qualified)}"
@@ -984,6 +1026,7 @@ def main(bot_state=None):
 
         # Confirmed: eligibility passed, amount known — safe to call Claude
         log(f"Eligibility check passed for \"{title[:60]}\" — calling Claude now")
+        print("CALLING CLAUDE NOW")  # Explicit stdout marker — must never appear before eligibility check
 
         # Draft bid with Claude
         bid = draft_bid(project, skill_names, portfolio)
