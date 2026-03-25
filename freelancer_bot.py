@@ -703,6 +703,7 @@ def submit_bid(project, bid_text, amount, token):
                 "period":               7,
                 "milestone_percentage": 100,
                 "description":          bid_text,
+                "sealed":               True,
             },
             timeout=15,
         )
