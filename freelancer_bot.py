@@ -212,6 +212,15 @@ BLOCKLIST_KEYWORDS = [
     "photography", "photographer", "photo shoot", "wedding photo",
     "portrait", "headshot", "drone photo", "real estate photo",
     "product photo", "food photo", "event photo",
+    # Commission / recruiting / ads / coaching
+    "commission based", "commission-based", "commission only",
+    "student recruiter", "recruiter", "recruitment",
+    "patient acquisition", "lead gen", "lead generation",
+    "facebook ads", "google ads", "paid ads", "ad campaign",
+    "coaching", "trainer", "training delivery", "mentor",
+    "sales funnel", "sales strategy", "sales partner",
+    "growth hacker", "growth marketing", "performance marketing",
+    "media buyer", "ad buyer", "ppc", "sem",
 ]
 
 _INDIA_PHRASES = [
@@ -259,12 +268,23 @@ def country_allowed(country_name, allowed_set):
         return False  # Explicit blocklist takes priority
     return name_lower in allowed_set
 
+_INTENT_WORDS = [
+    "build", "develop", "create", "design", "integrate",
+    "fix", "debug", "redesign", "migrate", "launch",
+    "website", "app", "platform", "system", "tool",
+    "developer", "engineer", "programmer", "coder",
+]
+
 def keyword_match(project):
-    """Return the first matching keyword if title/description contains a skill keyword."""
+    """Return the first matching keyword if title/description contains a skill keyword
+    alongside at least one intent word (indicating a build/dev context)."""
     text = " ".join([
         project.get("title", "") or "",
         project.get("description", "") or "",
     ]).lower()
+    has_intent = any(iw in text for iw in _INTENT_WORDS)
+    if not has_intent:
+        return None
     for kw in _SKILL_KEYWORDS:
         if kw in text:
             return kw
