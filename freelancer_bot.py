@@ -8,6 +8,7 @@ Runs in a loop, checking every 5 minutes.
 import json
 import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -1118,6 +1119,310 @@ def main(bot_state=None):
     save_last_run(len(projects), alerts_sent)
 
 
+# ---------------------------------------------------------------------------
+# Websocket listener — real-time new project feed
+# ---------------------------------------------------------------------------
+_ws_queue: queue.Queue = queue.Queue()
+
+
+def fetch_project_by_id(project_id, token):
+    """Fetch full details for a single project ID including user and job details."""
+    try:
+        resp = requests.get(
+            f"{FREELANCER_API}/projects/",
+            params=[
+                ("projects[]",       project_id),
+                ("full_description", "true"),
+                ("job_details",      "true"),
+                ("user_details",     "true"),
+            ],
+            headers={"Freelancer-OAuth-V1": token},
+            timeout=20,
+        )
+        if resp.status_code == 200:
+            result    = resp.json().get("result", {}) or {}
+            projects  = result.get("projects", {}) or {}
+            # API returns a dict keyed by project ID
+            project   = projects.get(str(project_id)) if isinstance(projects, dict) else (projects[0] if projects else None)
+            users     = result.get("users",    {}) or {}
+            jobs_dict = result.get("jobs",     {}) or {}
+            return project, users, jobs_dict
+        log(f"Websocket: project fetch failed ({resp.status_code}) for ID {project_id}", "warning")
+    except Exception as e:
+        log(f"Websocket: project fetch error for ID {project_id}: {e}", "warning")
+    return None, {}, {}
+
+
+def process_single_project(project_id, bot_state):
+    """Run the full filter → eligibility → Claude → bid pipeline for one project ID.
+    Mirrors the inner loop of main(); called from the websocket processor thread."""
+    if bot_state and bot_state.get("paused"):
+        return
+
+    settings = load_settings()
+    token    = settings["freelancer_token"]
+    tg_token = settings["telegram_bot_token"]
+    tg_chat  = str(settings["telegram_chat_id"])
+    allowed  = build_country_set(settings)
+
+    # Fetch skill IDs (needed for eligibility check)
+    my_skill_ids = set()
+    try:
+        me     = requests.get(
+            "https://www.freelancer.com/api/users/0.1/self/",
+            headers={"Freelancer-OAuth-V1": token},
+            params={"skill_details": "true"},
+            timeout=10,
+        ).json()
+        jobs   = (me.get("result") or {}).get("jobs", []) or []
+        my_skill_ids = {str(s.get("id")) for s in jobs if s.get("id")}
+    except Exception as e:
+        log(f"Websocket: could not fetch skill IDs: {e}", "warning")
+
+    portfolio = load_json(PORTFOLIO_FILE, [])
+    seen_ids  = load_seen_ids()
+    now       = time.time()
+    proj_id   = str(project_id)
+
+    if proj_id in seen_ids:
+        return  # Already handled by scan loop or a prior websocket event
+
+    project, users, jobs_dict = fetch_project_by_id(proj_id, token)
+    if not project:
+        log(f"Websocket: could not fetch details for project {proj_id}", "warning")
+        return
+
+    title_short = f"\"{project.get('title', '')[:60]}\""
+
+    # Country filter
+    owner_id     = str(project.get("owner_id", ""))
+    owner        = users.get(owner_id) or {}
+    location     = (owner.get("location") or {})
+    country_name = ((location.get("country") or {}).get("name") or "")
+    if not country_allowed(country_name, allowed):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
+        return
+
+    # Currency filter
+    if (project.get("currency") or {}).get("code", "") == "INR":
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [currency] {title_short}")
+        return
+
+    # Language filter
+    if not is_english(project):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [language] {title_short}")
+        return
+
+    # Budget filter
+    if not budget_ok(project, settings):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
+        return
+
+    # New-client filter
+    rep      = (owner.get("employer_reputation") or {})
+    history  = (rep.get("entire_history") or {})
+    complete = int(history.get("complete") or 0)
+    reviews  = int(history.get("reviews")  or 0)
+    reg_date = float(owner.get("registration_date") or 0)
+    six_months_ago = now - (180 * 24 * 3600)
+    if complete == 0 and reviews == 0 and reg_date > 0 and reg_date > six_months_ago:
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [new client - no history] {title_short}")
+        return
+
+    # India content filter
+    if is_india_project(project):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [india] {title_short}")
+        return
+
+    # Blocklist filter
+    blocked_kw = blocklist_match(project)
+    if blocked_kw:
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [blocklist] {title_short} keyword=\"{blocked_kw}\"")
+        return
+
+    # Skill keyword filter
+    matched_kw = keyword_match(project)
+    if not matched_kw:
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [skill] {title_short}")
+        return
+
+    # All filters passed — mark seen immediately
+    skill_names = get_skill_names(project, jobs_dict)
+    title  = project.get("title", "N/A")
+    budget = fmt_budget(project)
+    link   = project_link(project)
+    log(
+        f"WEBSOCKET PASSED [{proj_id}] \"{title[:60]}\" "
+        f"budget={budget} country=\"{country_name}\" keyword=\"{matched_kw}\""
+    )
+    seen_ids[proj_id] = now
+    cleanup_and_save(seen_ids)
+
+    # Eligibility check
+    eligible, reason = check_project_eligibility(proj_id, token, my_skill_ids)
+    if not eligible:
+        silent         = reason.startswith("SILENT:")
+        display_reason = reason[7:] if silent else reason
+        log(f"WEBSOCKET SKIPPED [{proj_id}] \"{title[:60]}\" — {display_reason}")
+        if not silent:
+            send_telegram(f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}", tg_token, tg_chat)
+        return
+
+    # Bid amount
+    amount, amount_label = calc_bid_amount(project)
+    if amount is None:
+        log(f"Websocket: skipping [{proj_id}] \"{title[:60]}\" — {amount_label}", "warning")
+        return
+    log(f"Websocket bid amount: {amount_label}")
+
+    # Call Claude
+    log(f"Websocket: eligibility passed for \"{title[:60]}\" — calling Claude")
+    bid = draft_bid(project, skill_names, portfolio)
+    if not bid:
+        log(f"Websocket: bid drafting failed for [{proj_id}]")
+        return
+    log_portfolio_chosen(bid, portfolio)
+
+    # Submit bid (retry once on TOO_FAST)
+    success, error = submit_bid(project, bid, amount, token)
+    if error == "ALREADY_BID":
+        log(f"Websocket SKIPPED [{proj_id}] — already bid (silent)")
+        return
+    if error == "WRONG_LANGUAGE":
+        log(f"Websocket SKIPPED [{proj_id}] — wrong language", "warning")
+        send_telegram(f"⛔ SKIPPED - Wrong language: {title}", tg_token, tg_chat)
+        return
+    if error == "TOO_FAST":
+        log("Websocket: bidding too fast — waiting 45 seconds and retrying...", "warning")
+        time.sleep(45)
+        success, error = submit_bid(project, bid, amount, token)
+        if error == "TOO_FAST":
+            log(f"Websocket SKIPPED [{proj_id}] — still too fast after retry.", "warning")
+            return
+
+    SEP = "\u2500" * 25
+    if success:
+        tg_msg = (
+            f"⚡ BID PLACED (via websocket)\n\n"
+            f"📋 Project: {title}\n"
+            f"🔗 {link}\n"
+            f"💰 Budget: {budget}\n"
+            f"🌍 Country: {country_name}\n\n"
+            f"{SEP}\n\n"
+            f"{bid}\n\n"
+            f"{SEP}"
+        )
+    else:
+        tg_msg = (
+            f"⚠️ BID FAILED (via websocket)\n\n"
+            f"📋 Project: {title}\n"
+            f"🔗 {link}\n"
+            f"💰 Budget: {budget}\n"
+            f"🌍 Country: {country_name}\n"
+            f"❌ Reason: {error}\n\n"
+            f"{SEP}\n\n"
+            f"{bid}\n\n"
+            f"{SEP}"
+        )
+
+    if send_telegram(tg_msg, tg_token, tg_chat):
+        save_recent_alert(project, country_name, skill_names)
+
+
+def ws_processor(bot_state):
+    """Background thread: drain _ws_queue and run the bid pipeline for each project."""
+    while True:
+        project_id = _ws_queue.get()
+        try:
+            process_single_project(project_id, bot_state)
+        except Exception as e:
+            log(f"Websocket processor error for project {project_id}: {e}", "warning")
+        finally:
+            _ws_queue.task_done()
+
+
+def listen_websocket(bot_state):
+    """Connect to the Freelancer push websocket and queue new project IDs.
+    Runs in a background thread; auto-reconnects on disconnect after 5 seconds.
+
+    Auth + subscription format is based on the Freelancer push service at
+    wss://www.freelancer.com/push. If the handshake format changes, update
+    on_open() below. See: https://developers.freelancer.com
+    """
+    try:
+        import websocket as websocket_client
+    except ImportError:
+        log("ERROR: websocket-client not installed. Run: pip install websocket-client", "error")
+        return
+
+    def get_token():
+        return load_settings()["freelancer_token"]
+
+    def on_open(ws):
+        log("Websocket connected — listening for new projects in real time")
+        token = get_token()
+        # Authenticate, then subscribe to the new-projects channel
+        ws.send(json.dumps({"command": "auth",      "token":   token}))
+        ws.send(json.dumps({"command": "subscribe", "channel": "projects/posted"}))
+
+    def on_message(ws, message):
+        try:
+            data = json.loads(message)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        event   = data.get("event") or data.get("type") or data.get("channel", "")
+        payload = data.get("data")  or data.get("payload") or data
+
+        # Accept any of the event names Freelancer might use for new projects
+        if event not in ("projects/posted", "newProject", "project.posted", "project"):
+            return
+
+        project_id = (
+            payload.get("id")
+            or payload.get("project_id")
+            or (payload.get("project") or {}).get("id")
+        )
+        title = (
+            payload.get("title")
+            or (payload.get("project") or {}).get("title", "")
+        )
+        if not project_id:
+            return
+
+        log(f"WEBSOCKET: New project received — \"{str(title)[:60]}\" — processing immediately")
+        _ws_queue.put(str(project_id))
+
+    def on_error(ws, error):
+        log(f"Websocket error: {error}", "warning")
+
+    def on_close(ws, close_status_code, close_msg):
+        log(f"Websocket disconnected (code={close_status_code}) — reconnecting in 5 seconds", "warning")
+
+    while True:
+        try:
+            token = get_token()
+            ws = websocket_client.WebSocketApp(
+                f"wss://www.freelancer.com/push?token={token}",
+                on_open=on_open,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+            )
+            ws.run_forever(ping_interval=30, ping_timeout=10)
+        except Exception as e:
+            log(f"Websocket crashed: {e}", "warning")
+        time.sleep(5)
+
+
 if __name__ == "__main__":
     # Load settings once for startup message and command listener
     _startup_settings = load_settings()
@@ -1141,6 +1446,16 @@ if __name__ == "__main__":
     )
     _listener.start()
     log("Telegram command listener started (responds to /pause, /play, /status).")
+
+    # Start websocket processor (drains _ws_queue)
+    _ws_proc = threading.Thread(target=ws_processor, args=(bot_state,), daemon=True)
+    _ws_proc.start()
+    log("Websocket processor thread started.")
+
+    # Start websocket listener (connects to Freelancer push service)
+    _ws_listener = threading.Thread(target=listen_websocket, args=(bot_state,), daemon=True)
+    _ws_listener.start()
+    log("Websocket listener thread started.")
 
     while True:
         main(bot_state)
