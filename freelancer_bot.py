@@ -159,6 +159,8 @@ _BLOCKED_COUNTRIES = {
     "nigeria", "india", "pakistan", "bangladesh", "indonesia",
     "philippines", "vietnam", "nepal", "sri lanka", "ghana",
     "kenya", "ethiopia", "egypt", "myanmar", "cambodia",
+    "uzbekistan", "kazakhstan", "moldova", "albania", "kosovo",
+    "bolivia", "paraguay", "honduras", "guatemala", "el salvador",
 }
 
 _SKILL_KEYWORDS = {
@@ -222,11 +224,20 @@ BLOCKLIST_KEYWORDS = [
     "sales funnel", "sales strategy", "sales partner",
     "growth hacker", "growth marketing", "performance marketing",
     "media buyer", "ad buyer", "ppc", "sem",
+    # Data / infra / ops — not Anne's work
+    "data analyst", "data analysis", "nutanix", "vmware", "cisco",
+    "network engineer", "system administrator", "sysadmin",
+    "devops", "kubernetes", "docker", "cloud engineer",
+    "ivr", "call routing", "asterisk",
+    # Writing / copy
+    "funnel copy", "sales copy", "copywriter", "content writer",
 ]
 
 _INDIA_PHRASES = [
     "inr", "₹", "prayagraj", "looking for indian", "indian developer",
     "india based", "india only", "from india", "based in india",
+    # Sri Lanka — catches blank-country-field projects
+    "sri lanka", "sri lankan", "lkr", "colombo", "kandy",
 ]
 
 
@@ -829,6 +840,108 @@ def save_last_run(projects_checked, alerts_sent):
     })
 
 # ---------------------------------------------------------------------------
+# Per-project bid pipeline
+# ---------------------------------------------------------------------------
+def process_project(project, ctx):
+    """Post-filter pipeline: mark seen → eligibility → bid amount → Claude → submit.
+
+    draft_bid() is physically unreachable unless check_project_eligibility()
+    returns True — there is no other code path that reaches it.
+    """
+    proj_id      = str(project.get("id", ""))
+    title        = project.get("title", "N/A")
+    budget       = fmt_budget(project)
+    link         = project_link(project)
+    country_name = ctx["country_name"]
+    skill_names  = get_skill_names(project, ctx["jobs_dict"])
+    now          = ctx["now"]
+
+    # ── Step 1: Mark seen immediately ────────────────────────────────────────
+    ctx["new_seen"][proj_id] = now
+    cleanup_and_save(ctx["new_seen"])
+    log(f"Marked seen: \"{title[:60]}\"")
+
+    # ── Step 2: Eligibility check ─────────────────────────────────────────────
+    eligible, reason = check_project_eligibility(proj_id, ctx["token"], ctx["my_skill_ids"])
+    if not eligible:
+        silent         = reason.startswith("SILENT:")
+        display_reason = reason[7:] if silent else reason
+        ctx["counts"]["eligibility"] += 1
+        log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — {display_reason}")
+        if not silent:
+            send_telegram(
+                f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}",
+                ctx["tg_token"], ctx["tg_chat"],
+            )
+        return  # draft_bid() is unreachable from this point
+
+    # ── Step 3: Bid amount (only reached when eligible) ───────────────────────
+    amount, amount_label = calc_bid_amount(project)
+    if amount is None:
+        log(f"Skipping [{proj_id}] \"{title[:60]}\" — {amount_label}", "warning")
+        return
+
+    # Delay between bids — runs AFTER eligibility so we never wait for ineligible projects
+    if ctx["bids_attempted"] == 0:
+        log("First eligible project — submitting immediately")
+    else:
+        log("Next bid — waiting 30 seconds first...")
+        time.sleep(30)
+    ctx["bids_attempted"] += 1
+    log(f"Bid amount: {amount_label}")
+
+    # ── Step 4: Call Claude — only reachable after eligibility confirmed ───────
+    log(f"Eligibility confirmed for \"{title[:60]}\" — calling Claude now")
+    bid = draft_bid(project, skill_names, ctx["portfolio"])
+    if not bid:
+        log(f"Skipping alert — bid drafting failed for [{proj_id}]")
+        return
+    log_portfolio_chosen(bid, ctx["portfolio"])
+
+    # ── Step 5: Submit bid (retry once on TOO_FAST) ───────────────────────────
+    success, error = submit_bid(project, bid, amount, ctx["token"])
+    if error == "ALREADY_BID":
+        log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — already bid (silent)")
+        return
+    if error == "WRONG_LANGUAGE":
+        log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — wrong language (API rejection)", "warning")
+        send_telegram(f"⛔ SKIPPED - Wrong language: {title}", ctx["tg_token"], ctx["tg_chat"])
+        return
+    if error == "TOO_FAST":
+        log("Bidding too fast — waiting 45 seconds and retrying once...", "warning")
+        time.sleep(45)
+        success, error = submit_bid(project, bid, amount, ctx["token"])
+        if error == "TOO_FAST":
+            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — still too fast after retry.", "warning")
+            return
+
+    SEP = "\u2500" * 25
+    if success:
+        tg_msg = (
+            f"✅ BID PLACED\n\n"
+            f"📋 Project: {title}\n"
+            f"🔗 {link}\n"
+            f"💰 Budget: {budget}\n"
+            f"🌍 Country: {country_name}\n\n"
+            f"{SEP}\n\n{bid}\n\n{SEP}"
+        )
+    else:
+        tg_msg = (
+            f"⚠️ BID FAILED\n\n"
+            f"📋 Project: {title}\n"
+            f"🔗 {link}\n"
+            f"💰 Budget: {budget}\n"
+            f"🌍 Country: {country_name}\n"
+            f"❌ Reason: {error}\n\n"
+            f"{SEP}\n\n{bid}\n\n{SEP}"
+        )
+
+    if send_telegram(tg_msg, ctx["tg_token"], ctx["tg_chat"]):
+        save_recent_alert(project, country_name, skill_names)
+        ctx["alerts_sent"] += 1
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main(bot_state=None):
@@ -893,20 +1006,33 @@ def main(bot_state=None):
     jobs_dict = result.get("jobs", {})     or {}
     log(f"Received {len(projects)} project(s) from API")
 
-    # --- Single-pass: filter → mark seen → eligibility → Claude → submit ---
-    # Processing order is enforced here for every project:
-    #   1. Filter checks (blocklist, budget, country, skill keywords)
-    #   2. Mark project as seen immediately on filter pass
-    #   3. Check eligibility via Freelancer API
-    #   4. Only if eligibility passes: call Claude to write bid
-    #   5. Submit bid
     new_seen       = dict(seen_ids)
-    alerts_sent    = 0
     now            = time.time()
-    bids_attempted = 0  # counts projects that reached the eligibility/bid stage
-
-    counts = {"seen": 0, "currency": 0, "country": 0, "india": 0, "language": 0, "budget": 0, "new_client": 0, "blocklist": 0, "skill": 0, "eligibility": 0}
     six_months_ago = now - (180 * 24 * 3600)
+    counts = {
+        "seen": 0, "currency": 0, "country": 0, "india": 0,
+        "language": 0, "budget": 0, "new_client": 0,
+        "blocklist": 0, "skill": 0, "eligibility": 0,
+    }
+
+    # Shared context passed into process_project() for every qualifying project
+    ctx = {
+        "token":          token,
+        "tg_token":       tg_token,
+        "tg_chat":        tg_chat,
+        "allowed":        allowed,
+        "settings":       settings,
+        "users":          users,
+        "jobs_dict":      jobs_dict,
+        "new_seen":       new_seen,
+        "portfolio":      portfolio,
+        "my_skill_ids":   my_skill_ids,
+        "now":            now,
+        "counts":         counts,
+        "bids_attempted": 0,
+        "alerts_sent":    0,
+        "country_name":   "",   # set per project just before process_project()
+    }
 
     for project in projects:
         proj_id = str(project.get("id", ""))
@@ -915,20 +1041,16 @@ def main(bot_state=None):
 
         title_short = f"\"{project.get('title', '')[:60]}\""
 
-        # --- Step 1: Filter checks ---
+        # --- Filters ---
 
-        # Skip already seen (timestamp already in new_seen via dict copy)
         if proj_id in seen_ids:
             counts["seen"] += 1
             log(f"FILTERED [seen] {title_short}")
             continue
 
-        # Country filter (resolve early — needed for other log lines too)
-        owner_id    = str(project.get("owner_id", ""))
-        owner       = users.get(owner_id) or {}
-        location    = (owner.get("location") or {})
-        country_obj = (location.get("country") or {})
-        country_name = country_obj.get("name", "") or ""
+        owner_id     = str(project.get("owner_id", ""))
+        owner        = users.get(owner_id) or {}
+        country_name = (((owner.get("location") or {}).get("country") or {}).get("name") or "")
 
         if not country_allowed(country_name, allowed):
             counts["country"] += 1
@@ -936,33 +1058,28 @@ def main(bot_state=None):
             log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
             continue
 
-        # Currency filter — reject INR projects
-        currency_code = (project.get("currency") or {}).get("code", "")
-        if currency_code == "INR":
+        if (project.get("currency") or {}).get("code", "") == "INR":
             counts["currency"] += 1
             new_seen[proj_id] = now
             log(f"FILTERED [currency] {title_short} budget={fmt_budget(project)}")
             continue
 
-        # Language filter — reject non-English projects
         if not is_english(project):
             counts["language"] += 1
             new_seen[proj_id] = now
             log(f"FILTERED [language] {title_short} country=\"{country_name}\"")
             continue
 
-        # Budget filter
         if not budget_ok(project, settings):
             counts["budget"] += 1
             new_seen[proj_id] = now
             log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
             continue
 
-        # Client quality filter — reject brand-new accounts with zero history
         rep      = (owner.get("employer_reputation") or {})
         history  = (rep.get("entire_history") or {})
         complete = int(history.get("complete") or 0)
-        reviews  = int(history.get("reviews") or 0)
+        reviews  = int(history.get("reviews")  or 0)
         reg_date = float(owner.get("registration_date") or 0)
         if complete == 0 and reviews == 0 and reg_date > 0 and reg_date > six_months_ago:
             counts["new_client"] += 1
@@ -970,14 +1087,12 @@ def main(bot_state=None):
             log(f"FILTERED [new client - no history] {title_short} country=\"{country_name}\"")
             continue
 
-        # India content filter — catches India-based clients with blank country field
         if is_india_project(project):
             counts["india"] += 1
             new_seen[proj_id] = now
             log(f"FILTERED [india] {title_short}")
             continue
 
-        # Blocklist filter — rejects irrelevant job types before skill check
         blocked_kw = blocklist_match(project)
         if blocked_kw:
             counts["blocklist"] += 1
@@ -985,7 +1100,6 @@ def main(bot_state=None):
             log(f"FILTERED [blocklist] {title_short} keyword=\"{blocked_kw}\"")
             continue
 
-        # Skill keyword filter — client-side check on title + description
         matched_kw = keyword_match(project)
         if not matched_kw:
             counts["skill"] += 1
@@ -993,105 +1107,13 @@ def main(bot_state=None):
             log(f"FILTERED [skill] {title_short}")
             continue
 
-        # --- Step 2: All filters passed — mark seen immediately ---
-        # Persisting to disk now means a crash mid-bid never causes a duplicate
-        # attempt on the next scan.
-        skill_names = get_skill_names(project, jobs_dict)
-        title   = project.get("title", "N/A")
-        budget  = fmt_budget(project)
-        link    = project_link(project)
+        # --- All filters passed — hand off to process_project() ---
         log(
-            f"PASSED [{proj_id}] \"{title[:60]}\" "
-            f"budget={budget} country=\"{country_name}\" "
-            f"keyword=\"{matched_kw}\""
+            f"PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
+            f"budget={fmt_budget(project)} country=\"{country_name}\" keyword=\"{matched_kw}\""
         )
-        new_seen[proj_id] = now
-        cleanup_and_save(new_seen)
-        log(f"Marked seen immediately: \"{title[:60]}\"")
-
-        # Delay between bids — first one fires immediately
-        if bids_attempted == 0:
-            log("First eligible project — submitting immediately")
-        else:
-            log(f"Next bid — waiting 30 seconds first...")
-            time.sleep(30)
-        bids_attempted += 1
-
-        # --- Step 3: Eligibility check via Freelancer API ---
-        eligible, reason = check_project_eligibility(proj_id, token, my_skill_ids)
-        if not eligible:
-            silent = reason.startswith("SILENT:")
-            display_reason = reason[7:] if silent else reason
-            counts["eligibility"] += 1
-            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — {display_reason}")
-            if not silent:
-                send_telegram(f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}", tg_token, tg_chat)
-            continue
-
-        # Calculate bid amount (70% of max budget)
-        amount, amount_label = calc_bid_amount(project)
-        if amount is None:
-            log(f"Skipping [{proj_id}] \"{title[:60]}\" — {amount_label}", "warning")
-            continue
-        log(f"Bid amount calculated: {amount_label}")
-
-        # --- Step 4: Eligibility confirmed — call Claude to draft bid ---
-        log(f"Eligibility check passed for \"{title[:60]}\" — calling Claude now")
-        print("CALLING CLAUDE NOW")  # must never appear before eligibility check passes
-
-        # ELIGIBILITY MUST PASS BEFORE THIS LINE
-        bid = draft_bid(project, skill_names, portfolio)
-        if not bid:
-            log(f"Skipping alert — bid drafting failed for [{proj_id}]")
-            continue
-        log_portfolio_chosen(bid, portfolio)
-
-        # --- Step 5: Submit bid — retry once on TOO_FAST ---
-        success, error = submit_bid(project, bid, amount, token)
-        if error == "ALREADY_BID":
-            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — already bid (silent, no Telegram)")
-            continue  # already marked seen before Claude was called
-        if error == "WRONG_LANGUAGE":
-            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — wrong language (API rejection)", "warning")
-            send_telegram(f"⛔ SKIPPED - Wrong language: {title}", tg_token, tg_chat)
-            continue
-        if error == "TOO_FAST":
-            log("Bidding too fast — waiting 45 seconds and retrying once...", "warning")
-            time.sleep(45)
-            success, error = submit_bid(project, bid, amount, token)
-            if error == "TOO_FAST":
-                log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — still too fast after retry, will retry next scan.", "warning")
-                # Do NOT mark seen — let it retry next scan
-                continue
-
-        SEP = "\u2500" * 25
-        if success:
-            tg_msg = (
-                f"✅ BID PLACED\n\n"
-                f"📋 Project: {title}\n"
-                f"🔗 {link}\n"
-                f"💰 Budget: {budget}\n"
-                f"🌍 Country: {country_name}\n\n"
-                f"{SEP}\n\n"
-                f"{bid}\n\n"
-                f"{SEP}"
-            )
-        else:
-            tg_msg = (
-                f"⚠️ BID FAILED\n\n"
-                f"📋 Project: {title}\n"
-                f"🔗 {link}\n"
-                f"💰 Budget: {budget}\n"
-                f"🌍 Country: {country_name}\n"
-                f"❌ Reason: {error}\n\n"
-                f"{SEP}\n\n"
-                f"{bid}\n\n"
-                f"{SEP}"
-            )
-
-        if send_telegram(tg_msg, tg_token, tg_chat):
-            save_recent_alert(project, country_name, skill_names)
-            alerts_sent += 1
+        ctx["country_name"] = country_name
+        process_project(project, ctx)
 
     if counts["seen"] > 40:
         log("WARNING: Most projects already seen — waiting for new postings", "warning")
@@ -1108,15 +1130,14 @@ def main(bot_state=None):
         f"blocklist: {counts['blocklist']} | "
         f"skill: {counts['skill']} | "
         f"eligibility: {counts['eligibility']} | "
-        f"bids attempted: {bids_attempted}"
+        f"bids attempted: {ctx['bids_attempted']}"
     )
 
-    # --- Persist state ---
     cleaned = cleanup_and_save(new_seen)
     log(f"Saved {len(cleaned)} seen IDs (after 3-day cleanup)")
-    log(f"Done — checked {len(projects)}, sent {alerts_sent} alert(s).")
+    log(f"Done — checked {len(projects)}, sent {ctx['alerts_sent']} alert(s).")
 
-    save_last_run(len(projects), alerts_sent)
+    save_last_run(len(projects), ctx["alerts_sent"])
 
 
 # ---------------------------------------------------------------------------
