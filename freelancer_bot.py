@@ -840,80 +840,75 @@ def save_last_run(projects_checked, alerts_sent):
     })
 
 # ---------------------------------------------------------------------------
-# Per-project bid pipeline
+# Per-project bid pipeline — the ONLY place draft_bid() is called
 # ---------------------------------------------------------------------------
-def process_project(project, ctx):
-    """Post-filter pipeline: mark seen → eligibility → bid amount → Claude → submit.
+def mark_seen_immediately(project_id):
+    """Load seen IDs from disk, stamp this ID, and flush back.
+    Called as the very first step of process_project() so a crash
+    mid-pipeline never causes a duplicate bid."""
+    seen = load_seen_ids()
+    seen[str(project_id)] = time.time()
+    cleanup_and_save(seen)
 
+
+def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, jobs_dict, country_name):
+    """Single authoritative pipeline: mark seen → eligibility → Claude → submit.
+
+    This is the ONLY function in the file that calls draft_bid().
     draft_bid() is physically unreachable unless check_project_eligibility()
     returns True — there is no other code path that reaches it.
     """
-    proj_id      = str(project.get("id", ""))
-    title        = project.get("title", "N/A")
-    budget       = fmt_budget(project)
-    link         = project_link(project)
-    country_name = ctx["country_name"]
-    skill_names  = get_skill_names(project, ctx["jobs_dict"])
-    now          = ctx["now"]
+    project_id = str(project.get("id", ""))
+    title      = project.get("title", "")[:80]
+    link       = project_link(project)
+    budget     = fmt_budget(project)
 
-    # ── Step 1: Mark seen immediately ────────────────────────────────────────
-    ctx["new_seen"][proj_id] = now
-    cleanup_and_save(ctx["new_seen"])
-    log(f"Marked seen: \"{title[:60]}\"")
+    # STEP 1: Mark seen immediately — no exceptions
+    mark_seen_immediately(project_id)
 
-    # ── Step 2: Eligibility check ─────────────────────────────────────────────
-    eligible, reason = check_project_eligibility(proj_id, ctx["token"], ctx["my_skill_ids"])
+    # STEP 2: Eligibility check — MUST happen before Claude
+    eligible, skip_reason = check_project_eligibility(project_id, token, my_skill_ids)
     if not eligible:
-        silent         = reason.startswith("SILENT:")
-        display_reason = reason[7:] if silent else reason
-        ctx["counts"]["eligibility"] += 1
-        log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — {display_reason}")
+        silent         = skip_reason.startswith("SILENT:")
+        display_reason = skip_reason[7:] if silent else skip_reason
+        log(f"SKIPPED [eligibility] {title} — {display_reason}")
         if not silent:
-            send_telegram(
-                f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}",
-                ctx["tg_token"], ctx["tg_chat"],
-            )
-        return  # draft_bid() is unreachable from this point
+            send_telegram(f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}", tg_token, tg_chat)
+        return False
 
-    # ── Step 3: Bid amount (only reached when eligible) ───────────────────────
+    log(f"ELIGIBLE: {title} — calling Claude now")
+
+    # STEP 3: Bid amount (only reached if eligible)
     amount, amount_label = calc_bid_amount(project)
     if amount is None:
-        log(f"Skipping [{proj_id}] \"{title[:60]}\" — {amount_label}", "warning")
-        return
-
-    # Delay between bids — runs AFTER eligibility so we never wait for ineligible projects
-    if ctx["bids_attempted"] == 0:
-        log("First eligible project — submitting immediately")
-    else:
-        log("Next bid — waiting 30 seconds first...")
-        time.sleep(30)
-    ctx["bids_attempted"] += 1
+        log(f"SKIPPED [no bid amount] {title} — {amount_label}", "warning")
+        return False
     log(f"Bid amount: {amount_label}")
 
-    # ── Step 4: Call Claude — only reachable after eligibility confirmed ───────
-    log(f"Eligibility confirmed for \"{title[:60]}\" — calling Claude now")
-    bid = draft_bid(project, skill_names, ctx["portfolio"])
-    if not bid:
-        log(f"Skipping alert — bid drafting failed for [{proj_id}]")
-        return
-    log_portfolio_chosen(bid, ctx["portfolio"])
+    # STEP 4: Draft bid — only reached if eligible
+    skill_names = get_skill_names(project, jobs_dict)
+    bid_text = draft_bid(project, skill_names, portfolio)
+    if not bid_text:
+        log(f"DRAFT FAILED: {title}")
+        return False
+    log_portfolio_chosen(bid_text, portfolio)
 
-    # ── Step 5: Submit bid (retry once on TOO_FAST) ───────────────────────────
-    success, error = submit_bid(project, bid, amount, ctx["token"])
+    # STEP 5: Submit
+    success, error = submit_bid(project, bid_text, amount, token)
     if error == "ALREADY_BID":
-        log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — already bid (silent)")
-        return
+        log(f"SKIPPED [already bid] {title}")
+        return False
     if error == "WRONG_LANGUAGE":
-        log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — wrong language (API rejection)", "warning")
-        send_telegram(f"⛔ SKIPPED - Wrong language: {title}", ctx["tg_token"], ctx["tg_chat"])
-        return
+        log(f"SKIPPED [wrong language] {title}", "warning")
+        send_telegram(f"⛔ SKIPPED - Wrong language: {title}", tg_token, tg_chat)
+        return False
     if error == "TOO_FAST":
-        log("Bidding too fast — waiting 45 seconds and retrying once...", "warning")
+        log("TOO_FAST — waiting 45 seconds and retrying once...", "warning")
         time.sleep(45)
-        success, error = submit_bid(project, bid, amount, ctx["token"])
+        success, error = submit_bid(project, bid_text, amount, token)
         if error == "TOO_FAST":
-            log(f"SKIPPED [{proj_id}] \"{title[:60]}\" — still too fast after retry.", "warning")
-            return
+            log(f"SKIPPED [still too fast] {title}", "warning")
+            return False
 
     SEP = "\u2500" * 25
     if success:
@@ -923,7 +918,7 @@ def process_project(project, ctx):
             f"🔗 {link}\n"
             f"💰 Budget: {budget}\n"
             f"🌍 Country: {country_name}\n\n"
-            f"{SEP}\n\n{bid}\n\n{SEP}"
+            f"{SEP}\n\n{bid_text}\n\n{SEP}"
         )
     else:
         tg_msg = (
@@ -933,12 +928,12 @@ def process_project(project, ctx):
             f"💰 Budget: {budget}\n"
             f"🌍 Country: {country_name}\n"
             f"❌ Reason: {error}\n\n"
-            f"{SEP}\n\n{bid}\n\n{SEP}"
+            f"{SEP}\n\n{bid_text}\n\n{SEP}"
         )
 
-    if send_telegram(tg_msg, ctx["tg_token"], ctx["tg_chat"]):
+    if send_telegram(tg_msg, tg_token, tg_chat):
         save_recent_alert(project, country_name, skill_names)
-        ctx["alerts_sent"] += 1
+    return success
 
 
 # ---------------------------------------------------------------------------
@@ -1015,24 +1010,7 @@ def main(bot_state=None):
         "blocklist": 0, "skill": 0, "eligibility": 0,
     }
 
-    # Shared context passed into process_project() for every qualifying project
-    ctx = {
-        "token":          token,
-        "tg_token":       tg_token,
-        "tg_chat":        tg_chat,
-        "allowed":        allowed,
-        "settings":       settings,
-        "users":          users,
-        "jobs_dict":      jobs_dict,
-        "new_seen":       new_seen,
-        "portfolio":      portfolio,
-        "my_skill_ids":   my_skill_ids,
-        "now":            now,
-        "counts":         counts,
-        "bids_attempted": 0,
-        "alerts_sent":    0,
-        "country_name":   "",   # set per project just before process_project()
-    }
+    alerts_sent = 0
 
     for project in projects:
         proj_id = str(project.get("id", ""))
@@ -1112,8 +1090,10 @@ def main(bot_state=None):
             f"PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
             f"budget={fmt_budget(project)} country=\"{country_name}\" keyword=\"{matched_kw}\""
         )
-        ctx["country_name"] = country_name
-        process_project(project, ctx)
+        new_seen[proj_id] = now  # keep final save consistent with mark_seen_immediately
+        result = process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, jobs_dict, country_name)
+        if result:
+            alerts_sent += 1
 
     if counts["seen"] > 40:
         log("WARNING: Most projects already seen — waiting for new postings", "warning")
@@ -1129,15 +1109,14 @@ def main(bot_state=None):
         f"new_client: {counts['new_client']} | "
         f"blocklist: {counts['blocklist']} | "
         f"skill: {counts['skill']} | "
-        f"eligibility: {counts['eligibility']} | "
-        f"bids attempted: {ctx['bids_attempted']}"
+        f"eligibility: {counts['eligibility']}"
     )
 
     cleaned = cleanup_and_save(new_seen)
     log(f"Saved {len(cleaned)} seen IDs (after 3-day cleanup)")
-    log(f"Done — checked {len(projects)}, sent {ctx['alerts_sent']} alert(s).")
+    log(f"Done — checked {len(projects)}, sent {alerts_sent} alert(s).")
 
-    save_last_run(len(projects), ctx["alerts_sent"])
+    save_last_run(len(projects), alerts_sent)
 
 
 # ---------------------------------------------------------------------------
@@ -1275,87 +1254,12 @@ def process_single_project(project_id, bot_state):
         log(f"FILTERED [skill] {title_short}")
         return
 
-    # All filters passed — mark seen immediately
-    skill_names = get_skill_names(project, jobs_dict)
-    title  = project.get("title", "N/A")
-    budget = fmt_budget(project)
-    link   = project_link(project)
+    # All filters passed — hand off to the single authoritative pipeline
     log(
-        f"WEBSOCKET PASSED [{proj_id}] \"{title[:60]}\" "
-        f"budget={budget} country=\"{country_name}\" keyword=\"{matched_kw}\""
+        f"WEBSOCKET PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
+        f"country=\"{country_name}\" keyword=\"{matched_kw}\""
     )
-    seen_ids[proj_id] = now
-    cleanup_and_save(seen_ids)
-
-    # Eligibility check
-    eligible, reason = check_project_eligibility(proj_id, token, my_skill_ids)
-    if not eligible:
-        silent         = reason.startswith("SILENT:")
-        display_reason = reason[7:] if silent else reason
-        log(f"WEBSOCKET SKIPPED [{proj_id}] \"{title[:60]}\" — {display_reason}")
-        if not silent:
-            send_telegram(f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}", tg_token, tg_chat)
-        return
-
-    # Bid amount
-    amount, amount_label = calc_bid_amount(project)
-    if amount is None:
-        log(f"Websocket: skipping [{proj_id}] \"{title[:60]}\" — {amount_label}", "warning")
-        return
-    log(f"Websocket bid amount: {amount_label}")
-
-    # Call Claude
-    log(f"Websocket: eligibility passed for \"{title[:60]}\" — calling Claude")
-    bid = draft_bid(project, skill_names, portfolio)
-    if not bid:
-        log(f"Websocket: bid drafting failed for [{proj_id}]")
-        return
-    log_portfolio_chosen(bid, portfolio)
-
-    # Submit bid (retry once on TOO_FAST)
-    success, error = submit_bid(project, bid, amount, token)
-    if error == "ALREADY_BID":
-        log(f"Websocket SKIPPED [{proj_id}] — already bid (silent)")
-        return
-    if error == "WRONG_LANGUAGE":
-        log(f"Websocket SKIPPED [{proj_id}] — wrong language", "warning")
-        send_telegram(f"⛔ SKIPPED - Wrong language: {title}", tg_token, tg_chat)
-        return
-    if error == "TOO_FAST":
-        log("Websocket: bidding too fast — waiting 45 seconds and retrying...", "warning")
-        time.sleep(45)
-        success, error = submit_bid(project, bid, amount, token)
-        if error == "TOO_FAST":
-            log(f"Websocket SKIPPED [{proj_id}] — still too fast after retry.", "warning")
-            return
-
-    SEP = "\u2500" * 25
-    if success:
-        tg_msg = (
-            f"⚡ BID PLACED (via websocket)\n\n"
-            f"📋 Project: {title}\n"
-            f"🔗 {link}\n"
-            f"💰 Budget: {budget}\n"
-            f"🌍 Country: {country_name}\n\n"
-            f"{SEP}\n\n"
-            f"{bid}\n\n"
-            f"{SEP}"
-        )
-    else:
-        tg_msg = (
-            f"⚠️ BID FAILED (via websocket)\n\n"
-            f"📋 Project: {title}\n"
-            f"🔗 {link}\n"
-            f"💰 Budget: {budget}\n"
-            f"🌍 Country: {country_name}\n"
-            f"❌ Reason: {error}\n\n"
-            f"{SEP}\n\n"
-            f"{bid}\n\n"
-            f"{SEP}"
-        )
-
-    if send_telegram(tg_msg, tg_token, tg_chat):
-        save_recent_alert(project, country_name, skill_names)
+    process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, jobs_dict, country_name)
 
 
 def ws_processor(bot_state):
