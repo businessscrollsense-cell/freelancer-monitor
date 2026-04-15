@@ -163,74 +163,63 @@ _BLOCKED_COUNTRIES = {
     "bolivia", "paraguay", "honduras", "guatemala", "el salvador",
 }
 
-_SKILL_KEYWORDS = {
-    # Web development
-    "wordpress", "php", "javascript", "js", "react", "react.js", "next.js",
-    "nextjs", "vue.js", "angular", "node", "typescript", "html", "css",
-    "bootstrap", "tailwind", "django", "laravel", "webflow", "bubble.io",
-    # Design
-    "figma", "graphic design", "web design", "website design", "ux design",
-    "ui design",
-    # SEO & content
-    "seo", "copywriting", "content strategy", "content writing", "blog",
-    # Marketing
-    "digital marketing", "social media management", "social media marketing",
-    # Web/app types
-    "website", "web app", "web application", "saas", "crm",
-    "ecommerce", "e-commerce", "shopify", "woocommerce", "stripe",
-    # APIs & databases
-    "rest api", "graphql api", "api integration", "api development",
-    "graphql", "postgresql", "mysql", "database",
-    # AI
-    "artificial intelligence", "chatbot", "openai", "chatgpt", "prompt engineering",
-    # Mobile
-    "mobile app", "swift", "ios", "android",
-}
+_SKILL_KEYWORDS = [
+    "wordpress", "php", "mobile app", "android", "ios", "swift",
+    "web app", "web application", "website design", "website build",
+    "website development", "figma", "html", "css", "javascript",
+    "react", "next.js", "node.js", "typescript", "bootstrap", "tailwind",
+    "mysql", "postgresql", "database", "rest api", "graphql", "api integration",
+    "saas platform", "saas build", "saas develop", "crm build", "crm develop",
+    "ecommerce", "shopify", "woocommerce", "stripe integration",
+    "flutter", "dart", "react native", "lms", "learning management",
+    "web scraping", "automation build", "zapier", "make.com",
+    "podio", "airtable", "dashboard build", "ai chatbot", "chatgpt integration",
+    "openai", "prompt engineering", "app development", "app build",
+    "bug fix", "debug", "fix my", "complete my", "finish my",
+    "redesign", "figma to", "convert figma", "pwa"
+]
 
 BLOCKLIST_KEYWORDS = [
-    # Sales / outreach
-    "cold call", "cold caller", "appointment setter", "appointment setting",
-    "telemarketing", "telesales", "outbound call", "phone call", "mass messaging",
-    "whatsapp blast", "sms blast", "lead generation", "sales rep", "sales representative",
-    "closer", "commission only", "commission-only", "results-based pay",
-    # Data / admin
-    "data entry", "copy paste", "copy-paste", "excel data", "web scraping",
-    "scrape", "scraper", "virtual assistant", "va needed", "personal assistant",
-    # Support
-    "customer support", "customer service", "live chat", "chat support",
-    # Finance / legal
-    "bookkeeping", "accounting", "payroll", "tax",
-    "stock investment", "investment guidance", "financial advisor",
-    # Design / media
-    "logo design", "graphic design", "logo",
-    "video creation", "video edit", "video editing",
-    "image edit", "background removal", "photo edit", "photoshop", "illustrator",
-    "youtube", "tiktok", "instagram reel",
-    # Writing / translation
-    "content creation", "copywriting", "article writing", "blog writing",
-    "translations", "translator", "transcription", "proofreading",
-    # Security / misc
-    "pen test", "penetration test", "security audit", "geopolitical",
-    # Photography — not Anne's work
-    "photography", "photographer", "photo shoot", "wedding photo",
-    "portrait", "headshot", "drone photo", "real estate photo",
-    "product photo", "food photo", "event photo",
-    # Commission / recruiting / ads / coaching
-    "commission based", "commission-based", "commission only",
-    "student recruiter", "recruiter", "recruitment",
-    "patient acquisition", "lead gen", "lead generation",
-    "facebook ads", "google ads", "paid ads", "ad campaign",
-    "coaching", "trainer", "training delivery", "mentor",
-    "sales funnel", "sales strategy", "sales partner",
-    "growth hacker", "growth marketing", "performance marketing",
-    "media buyer", "ad buyer", "ppc", "sem",
-    # Data / infra / ops — not Anne's work
-    "data analyst", "data analysis", "nutanix", "vmware", "cisco",
-    "network engineer", "system administrator", "sysadmin",
-    "devops", "kubernetes", "docker", "cloud engineer",
-    "ivr", "call routing", "asterisk",
-    # Writing / copy
-    "funnel copy", "sales copy", "copywriter", "content writer",
+    # Sales and business roles
+    "sales role", "sales executive", "sales manager", "sales rep",
+    "commission based", "commission only", "results based",
+    "cold call", "appointment setter", "telemarketing",
+    "market expansion", "business development", "partnership",
+    "student recruiter", "recruiter", "outbound sales",
+
+    # Creative/design non-web
+    "logo design", "graphic design", "brochure", "flyer",
+    "3d design", "3d model", "rendering", "architectural",
+    "interior design", "furniture design", "paint", "dresser",
+    "video creation", "video edit", "explainer video", "animation",
+    "motion graphic", "youtube", "tiktok", "instagram reel",
+
+    # Writing and content
+    "copywriting", "content writer", "blog writing", "article writing",
+    "academic writing", "paper editing", "proofreading", "translation",
+    "transcription", "ghostwriter",
+
+    # Technical non-web
+    "unity", "unreal engine", "game development", "game design",
+    "3d modelling", "blender", "autocad",
+    "network engineer", "sysadmin", "devops", "kubernetes",
+    "penetration test", "pen test", "ethical hacking",
+    "data analyst", "data science", "machine learning model",
+    "nutanix", "vmware", "cisco", "IVR", "call routing",
+
+    # Data entry
+    "data entry", "copy paste", "data processing", "text entry",
+    "microsoft access", "ms access",
+
+    # Digital marketing
+    "facebook ads", "google ads", "paid ads", "ppc", "sem",
+    "social media management", "social media marketing",
+    "email marketing campaign", "seo audit", "seo strategy",
+    "digital marketing strategy", "media buyer",
+
+    # Local/physical jobs
+    "within 150km", "local job", "on-site", "onsite required",
+    "photography", "photographer", "photo shoot"
 ]
 
 _INDIA_PHRASES = [
@@ -503,6 +492,11 @@ STYLE RULES:
 
 def draft_bid(project, skill_names, portfolio):
     """Call Claude API to draft a bid for the project. Returns the bid text or None."""
+    # Safety guard — should never be called without eligibility passing
+    if not project.get("eligibility_confirmed"):
+        log(f"BLOCKED: draft_bid called without eligibility check for {project.get('title')}", "error")
+        return None
+
     if anthropic_sdk is None:
         log("Bid drafting skipped — 'anthropic' package not installed.", "warning")
         return None
@@ -614,11 +608,12 @@ def fetch_my_skill_ids(token):
         return set()
 
 
-def check_project_eligibility(project_id, token, my_skill_ids):
+def check_project_eligibility(project_id, token, my_skill_ids, project=None):
     """GET full project details and check for bid blockers before calling Claude.
 
     Returns (eligible: bool, reason: str | None).
     Reasons prefixed with "SILENT:" are logged but do NOT trigger a Telegram message.
+    Sets project["eligibility_confirmed"] = True on the passed-in dict when eligible.
     """
     try:
         resp = requests.get(
@@ -659,6 +654,8 @@ def check_project_eligibility(project_id, token, my_skill_ids):
             if missing:
                 return False, f"Missing required skills (IDs: {', '.join(sorted(missing))})"
 
+        if project is not None:
+            project["eligibility_confirmed"] = True
         return True, None
     except Exception as e:
         log(f"Pre-bid eligibility check error for {project_id}: {e} — blocking to avoid wasted Claude call.", "warning")
@@ -707,16 +704,18 @@ def parse_bid_error(response_json):
 BIDDER_ID = 83207744
 
 def calc_bid_amount(project):
-    """Return (amount, label) at 70% of max budget, or (None, reason) if budget missing."""
+    """Return (amount, label) at 70% of max budget, or (None, reason) if budget missing.
+    Amount is in the project's native currency — no conversion applied."""
     p_type = project.get("type", "fixed")
     budget = project.get("budget", {}) or {}
     max_b  = float(budget.get("maximum") or 0)
+    sign   = (project.get("currency") or {}).get("sign", "$")
 
     if not max_b:
         return None, "missing or zero maximum budget"
 
     amount = round(max_b * 0.70)
-    label  = f"${amount} (70% of ${max_b:.0f} max {'hourly rate' if p_type == 'hourly' else 'budget'})"
+    label  = f"{sign}{amount} (70% of {sign}{max_b:.0f} max {'hourly rate' if p_type == 'hourly' else 'budget'})"
     return amount, label
 
 
@@ -867,7 +866,7 @@ def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, 
     mark_seen_immediately(project_id)
 
     # STEP 2: Eligibility check — MUST happen before Claude
-    eligible, skip_reason = check_project_eligibility(project_id, token, my_skill_ids)
+    eligible, skip_reason = check_project_eligibility(project_id, token, my_skill_ids, project)
     if not eligible:
         silent         = skip_reason.startswith("SILENT:")
         display_reason = skip_reason[7:] if silent else skip_reason
@@ -1008,6 +1007,7 @@ def main(bot_state=None):
         "seen": 0, "currency": 0, "country": 0, "india": 0,
         "language": 0, "budget": 0, "new_client": 0,
         "blocklist": 0, "skill": 0, "eligibility": 0,
+        "spam_client": 0, "local_job": 0,
     }
 
     alerts_sent = 0
@@ -1085,6 +1085,21 @@ def main(bot_state=None):
             log(f"FILTERED [skill] {title_short}")
             continue
 
+        # Spam client filter — contacted too many freelancers
+        invited = int(project.get("invited_freelancer_count") or 0)
+        if invited > 20:
+            counts["spam_client"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [spam client - contacted 20+ freelancers] {title_short}")
+            continue
+
+        # Local job filter — requires physical presence
+        if project.get("local"):
+            counts["local_job"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [local job] {title_short}")
+            continue
+
         # --- All filters passed — hand off to process_project() ---
         log(
             f"PASSED [{proj_id}] \"{project.get('title', '')[:60]}\" "
@@ -1109,6 +1124,8 @@ def main(bot_state=None):
         f"new_client: {counts['new_client']} | "
         f"blocklist: {counts['blocklist']} | "
         f"skill: {counts['skill']} | "
+        f"spam_client: {counts['spam_client']} | "
+        f"local_job: {counts['local_job']} | "
         f"eligibility: {counts['eligibility']}"
     )
 
@@ -1252,6 +1269,19 @@ def process_single_project(project_id, bot_state):
     if not matched_kw:
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [skill] {title_short}")
+        return
+
+    # Spam client filter — contacted too many freelancers
+    invited = int(project.get("invited_freelancer_count") or 0)
+    if invited > 20:
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [spam client - contacted 20+ freelancers] {title_short}")
+        return
+
+    # Local job filter — requires physical presence
+    if project.get("local"):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [local job] {title_short}")
         return
 
     # All filters passed — hand off to the single authoritative pipeline
