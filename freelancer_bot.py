@@ -219,7 +219,12 @@ BLOCKLIST_KEYWORDS = [
 
     # Local/physical jobs
     "within 150km", "local job", "on-site", "onsite required",
-    "photography", "photographer", "photo shoot"
+    "photography", "photographer", "photo shoot",
+
+    # Analysis / planning / design non-web
+    "rate limits analysis", "data analysis", "trend analysis",
+    "site planning", "dwelling", "autocad", "residential design",
+    "poster", "slide design", "presentation design", "adobe"
 ]
 
 _INDIA_PHRASES = [
@@ -492,10 +497,9 @@ STYLE RULES:
 
 def draft_bid(project, skill_names, portfolio):
     """Call Claude API to draft a bid for the project. Returns the bid text or None."""
-    # Safety guard — should never be called without eligibility passing
-    if not project.get("eligibility_confirmed"):
-        log(f"BLOCKED: draft_bid called without eligibility check for {project.get('title')}", "error")
-        return None
+    # Hard stop — raises immediately if eligibility was never confirmed
+    if not project.get("eligibility_confirmed", False):
+        raise Exception(f"SAFETY VIOLATION: draft_bid called without eligibility check on {project.get('title')}")
 
     if anthropic_sdk is None:
         log("Bid drafting skipped — 'anthropic' package not installed.", "warning")
