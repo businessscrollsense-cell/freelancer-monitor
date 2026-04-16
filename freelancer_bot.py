@@ -1325,10 +1325,15 @@ def listen_websocket(bot_state):
     def get_token():
         return load_settings()["freelancer_token"]
 
+    _reconnect_count = [0]
+
     def on_open(ws):
-        log("Websocket connected — listening for new projects in real time")
+        count = _reconnect_count[0]
+        if count == 0:
+            log("WEBSOCKET: Connected — authenticated and subscribed to projects/posted")
+        else:
+            log(f"WEBSOCKET: Reconnected (attempt {count}) — authenticated and subscribed to projects/posted")
         token = get_token()
-        # Authenticate, then subscribe to the new-projects channel
         ws.send(json.dumps({"command": "auth",      "token":   token}))
         ws.send(json.dumps({"command": "subscribe", "channel": "projects/posted"}))
 
@@ -1336,10 +1341,13 @@ def listen_websocket(bot_state):
         try:
             data = json.loads(message)
         except (json.JSONDecodeError, TypeError):
+            log(f"WEBSOCKET EVENT: non-JSON message received: {str(message)[:120]}")
             return
 
         event   = data.get("event") or data.get("type") or data.get("channel", "")
         payload = data.get("data")  or data.get("payload") or data
+
+        log(f"WEBSOCKET EVENT received: {event!r}")
 
         # Accept any of the event names Freelancer might use for new projects
         if event not in ("projects/posted", "newProject", "project.posted", "project"):
@@ -1355,16 +1363,17 @@ def listen_websocket(bot_state):
             or (payload.get("project") or {}).get("title", "")
         )
         if not project_id:
+            log(f"WEBSOCKET EVENT: matched event {event!r} but no project_id found in payload")
             return
 
         log(f"WEBSOCKET: New project received — \"{str(title)[:60]}\" — processing immediately")
         _ws_queue.put(str(project_id))
 
     def on_error(ws, error):
-        log(f"Websocket error: {error}", "warning")
+        log(f"WEBSOCKET: Error — {error}", "warning")
 
     def on_close(ws, close_status_code, close_msg):
-        log(f"Websocket disconnected (code={close_status_code}) — reconnecting in 5 seconds", "warning")
+        log(f"WEBSOCKET: Disconnected (code={close_status_code}, msg={close_msg}) — reconnecting in 5 seconds", "warning")
 
     while True:
         try:
@@ -1378,7 +1387,8 @@ def listen_websocket(bot_state):
             )
             ws.run_forever(ping_interval=30, ping_timeout=10)
         except Exception as e:
-            log(f"Websocket crashed: {e}", "warning")
+            log(f"WEBSOCKET: Crashed — {e}", "warning")
+        _reconnect_count[0] += 1
         time.sleep(5)
 
 
