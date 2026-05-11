@@ -1004,9 +1004,8 @@ def main(bot_state=None):
     jobs_dict = result.get("jobs", {})     or {}
     log(f"Received {len(projects)} project(s) from API")
 
-    new_seen       = dict(seen_ids)
-    now            = time.time()
-    six_months_ago = now - (180 * 24 * 3600)
+    new_seen = dict(seen_ids)
+    now      = time.time()
     counts = {
         "seen": 0, "currency": 0, "country": 0, "india": 0,
         "language": 0, "budget": 0, "new_client": 0,
@@ -1062,8 +1061,7 @@ def main(bot_state=None):
         history  = (rep.get("entire_history") or {})
         complete = int(history.get("complete") or 0)
         reviews  = int(history.get("reviews")  or 0)
-        reg_date = float(owner.get("registration_date") or 0)
-        if complete == 0 and reviews == 0 and reg_date > 0 and reg_date > six_months_ago:
+        if complete == 0 and reviews == 0:
             counts["new_client"] += 1
             new_seen[proj_id] = now
             log(f"FILTERED [new client - no history] {title_short} country=\"{country_name}\"")
@@ -1248,9 +1246,7 @@ def process_single_project(project_id, bot_state):
     history  = (rep.get("entire_history") or {})
     complete = int(history.get("complete") or 0)
     reviews  = int(history.get("reviews")  or 0)
-    reg_date = float(owner.get("registration_date") or 0)
-    six_months_ago = now - (180 * 24 * 3600)
-    if complete == 0 and reviews == 0 and reg_date > 0 and reg_date > six_months_ago:
+    if complete == 0 and reviews == 0:
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [new client - no history] {title_short}")
         return
