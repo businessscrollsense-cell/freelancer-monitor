@@ -193,6 +193,10 @@ BLOCKLIST_KEYWORDS = [
     "cold call", "appointment setter", "telemarketing",
     "market expansion", "business development", "partnership",
     "student recruiter", "recruiter", "outbound sales",
+    "contact specialist", "business contact", "calling businesses",
+    "phone outreach", "outbound calling", "call businesses",
+    "customer service representative", "customer service agent",
+    "customer support agent", "live chat agent", "chat support agent",
 
     # Creative/design non-web
     "logo design", "graphic design", "brochure", "flyer",
