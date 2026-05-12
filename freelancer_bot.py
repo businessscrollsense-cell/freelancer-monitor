@@ -176,7 +176,14 @@ _SKILL_KEYWORDS = [
     "podio", "airtable", "dashboard build", "ai chatbot", "chatgpt integration",
     "openai", "prompt engineering", "app development", "app build",
     "bug fix", "debug", "fix my", "complete my", "finish my",
-    "redesign", "figma to", "convert figma", "pwa"
+    "redesign", "figma to", "convert figma", "pwa",
+    "developer", "web developer", "app developer", "software developer",
+    "build a website", "build a web", "build an app", "build a platform",
+    "need a developer", "looking for a developer", "hire a developer",
+    "wordpress developer", "php developer", "react developer",
+    "website", "web platform", "online platform", "digital platform",
+    "e-commerce", "online store", "booking system", "management system",
+    "custom website", "custom app", "custom platform"
 ]
 
 BLOCKLIST_KEYWORDS = [
@@ -222,9 +229,9 @@ BLOCKLIST_KEYWORDS = [
     "photography", "photographer", "photo shoot",
 
     # Analysis / planning / design non-web
-    "rate limits analysis", "data analysis", "trend analysis",
+    "rate limits analysis",
     "site planning", "dwelling", "autocad", "residential design",
-    "poster", "slide design", "presentation design", "adobe"
+    "poster", "slide design"
 ]
 
 _INDIA_PHRASES = [
@@ -1008,7 +1015,7 @@ def main(bot_state=None):
     now      = time.time()
     counts = {
         "seen": 0, "currency": 0, "country": 0, "india": 0,
-        "language": 0, "budget": 0, "new_client": 0,
+        "language": 0, "budget": 0,
         "blocklist": 0, "skill": 0, "eligibility": 0,
         "spam_client": 0, "local_job": 0,
     }
@@ -1055,16 +1062,6 @@ def main(bot_state=None):
             counts["budget"] += 1
             new_seen[proj_id] = now
             log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
-            continue
-
-        rep      = (owner.get("employer_reputation") or {})
-        history  = (rep.get("entire_history") or {})
-        complete = int(history.get("complete") or 0)
-        reviews  = int(history.get("reviews")  or 0)
-        if complete == 0 and reviews == 0:
-            counts["new_client"] += 1
-            new_seen[proj_id] = now
-            log(f"FILTERED [new client - no history] {title_short} country=\"{country_name}\"")
             continue
 
         if is_india_project(project):
@@ -1123,7 +1120,6 @@ def main(bot_state=None):
         f"india: {counts['india']} | "
         f"language: {counts['language']} | "
         f"budget: {counts['budget']} | "
-        f"new_client: {counts['new_client']} | "
         f"blocklist: {counts['blocklist']} | "
         f"skill: {counts['skill']} | "
         f"spam_client: {counts['spam_client']} | "
@@ -1239,16 +1235,6 @@ def process_single_project(project_id, bot_state):
     if not budget_ok(project, settings):
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [budget] {title_short} budget={fmt_budget(project)}")
-        return
-
-    # New-client filter
-    rep      = (owner.get("employer_reputation") or {})
-    history  = (rep.get("entire_history") or {})
-    complete = int(history.get("complete") or 0)
-    reviews  = int(history.get("reviews")  or 0)
-    if complete == 0 and reviews == 0:
-        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
-        log(f"FILTERED [new client - no history] {title_short}")
         return
 
     # India content filter
