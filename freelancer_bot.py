@@ -235,7 +235,27 @@ BLOCKLIST_KEYWORDS = [
     # Analysis / planning / design non-web
     "rate limits analysis",
     "site planning", "dwelling", "autocad", "residential design",
-    "poster", "slide design"
+    "poster", "slide design",
+
+    # Engineering non-web
+    "structural analysis", "structural engineer", "structural design",
+    "civil engineer", "mechanical engineer",
+
+    # Research / academic
+    "medical research", "clinical research", "literature review",
+    "research design", "systematic review", "peer review",
+
+    # E-commerce ops (non-build)
+    "ebay listing", "ebay seller", "product listing", "order fulfillment",
+    "order fulfilment", "dropshipping", "amazon seller", "amazon fba",
+
+    # Finance / trading
+    "trading bot", "trading algorithm", "algo trading", "algorithmic trading",
+    "forex", "crypto trading", "stock trading", "financial trading",
+
+    # ML / computer vision
+    "pose estimation", "computer vision", "nlp model", "machine learning pipeline",
+    "deep learning", "neural network", "llm fine", "model training"
 ]
 
 _INDIA_PHRASES = [
