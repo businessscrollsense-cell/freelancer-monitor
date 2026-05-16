@@ -803,13 +803,14 @@ def calc_bid_amount(project):
     Amount is in the project's native currency — no conversion applied."""
     p_type = project.get("type", "fixed")
     budget = project.get("budget", {}) or {}
+    min_b  = float(budget.get("minimum") or 0)
     max_b  = float(budget.get("maximum") or 0)
     sign   = (project.get("currency") or {}).get("sign", "$")
 
     if not max_b:
         return None, "missing or zero maximum budget"
 
-    amount = round(max_b * 0.70)
+    amount = max(round(max_b * 0.70), round(min_b))
     label  = f"{sign}{amount} (70% of {sign}{max_b:.0f} max {'hourly rate' if p_type == 'hourly' else 'budget'})"
     return amount, label
 
