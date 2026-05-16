@@ -305,6 +305,53 @@ def country_allowed(country_name, allowed_set):
         return False  # Explicit blocklist takes priority
     return name_lower in allowed_set
 
+_BLOCKED_CATEGORIES = {
+    # Lead gen / sales
+    "lead-generation", "leads", "sales", "telemarketing",
+    # Academic / writing
+    "academic-research", "article-writing", "copywriting", "ghostwriting",
+    "script-writing", "creative-writing", "proofreading", "translation",
+    "technical-writing", "business-writing",
+    # Admin / VA
+    "administrative-support", "virtual-assistant", "customer-service",
+    # Engineering (non-web)
+    "estimation", "structural-engineering", "mechanical-engineering",
+    "civil-engineering", "electrical-engineering", "autocad", "cad",
+    # GIS / mapping
+    "arcgis",
+    # Data entry / research
+    "data-entry", "data-analysis", "data-science", "market-research",
+    # Procurement
+    "sourcing",
+    # Reverse engineering
+    "reverse-engineering",
+    # Design (non-web)
+    "logo-design", "graphic-design", "illustration", "caricature-illustration",
+    "3d-modelling", "architecture", "interior-design", "fashion-design",
+    # Media
+    "photography", "video-production", "animation", "motion-graphics",
+    "audio-production", "voice-talent", "podcasts",
+    # Games
+    "game-development", "unity",
+    # Finance / legal / medical
+    "accounting", "bookkeeping", "financial-planning", "legal",
+    "medical-writing", "healthcare", "nursing",
+    # Marketing (non-dev)
+    "internet-marketing", "social-media-marketing", "link-building",
+    # Science / math
+    "statistics", "mathematics", "physics", "chemistry",
+}
+
+
+def category_blocked(project):
+    """Return the Freelancer category slug if the project is in a blocked category."""
+    seo = (project.get("seo_url") or "").strip("/")
+    if not seo:
+        return None
+    category = seo.split("/")[0].lower()
+    return category if category in _BLOCKED_CATEGORIES else None
+
+
 _INTENT_WORDS = [
     "build", "develop", "create", "design", "integrate",
     "fix", "debug", "redesign", "migrate", "launch",
@@ -1040,7 +1087,7 @@ def main(bot_state=None):
     counts = {
         "seen": 0, "currency": 0, "country": 0, "india": 0,
         "language": 0, "budget": 0,
-        "blocklist": 0, "skill": 0, "eligibility": 0,
+        "blocklist": 0, "category": 0, "skill": 0, "eligibility": 0,
         "spam_client": 0, "local_job": 0,
     }
 
@@ -1094,6 +1141,13 @@ def main(bot_state=None):
             log(f"FILTERED [india] {title_short}")
             continue
 
+        blocked_cat = category_blocked(project)
+        if blocked_cat:
+            counts["category"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [category] {title_short} category=\"{blocked_cat}\"")
+            continue
+
         blocked_kw = blocklist_match(project)
         if blocked_kw:
             counts["blocklist"] += 1
@@ -1144,6 +1198,7 @@ def main(bot_state=None):
         f"india: {counts['india']} | "
         f"language: {counts['language']} | "
         f"budget: {counts['budget']} | "
+        f"category: {counts['category']} | "
         f"blocklist: {counts['blocklist']} | "
         f"skill: {counts['skill']} | "
         f"spam_client: {counts['spam_client']} | "
@@ -1265,6 +1320,13 @@ def process_single_project(project_id, bot_state):
     if is_india_project(project):
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [india] {title_short}")
+        return
+
+    # Category filter — block entire Freelancer job categories we can't bid on
+    blocked_cat = category_blocked(project)
+    if blocked_cat:
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [category] {title_short} category=\"{blocked_cat}\"")
         return
 
     # Blocklist filter
