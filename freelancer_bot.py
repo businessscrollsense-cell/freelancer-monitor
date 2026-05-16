@@ -306,6 +306,10 @@ def country_allowed(country_name, allowed_set):
     return name_lower in allowed_set
 
 _BLOCKED_CATEGORIES = {
+    # Electronics / embedded / hardware
+    "can-bus", "pcb-design", "pcb", "embedded-systems", "fpga",
+    "circuit-design", "electronics", "verilog", "vhdl", "microcontroller",
+    "electrical-engineering", "power-electronics",
     # Lead gen / sales
     "lead-generation", "leads", "sales", "telemarketing",
     # Academic / writing
@@ -618,11 +622,20 @@ def draft_bid(project, skill_names, portfolio):
     try:
         client   = anthropic_sdk.Anthropic(api_key=api_key)
         messages = [{"role": "user", "content": user_prompt}]
+        # System prompt is cached — portfolio JSON is large and identical every call.
+        # Cache TTL is 5 minutes; with 30-second polling the cache stays warm.
+        cached_system = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
         response = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=600,
-            system=system_prompt,
+            system=cached_system,
             messages=messages,
+        )
+        usage = response.usage
+        log(
+            f"Claude usage — input: {usage.input_tokens} "
+            f"(cached: {getattr(usage, 'cache_read_input_tokens', 0)}) "
+            f"output: {usage.output_tokens}"
         )
         bid_text = next((b.text for b in response.content if b.type == "text"), None)
         if not bid_text:
@@ -639,9 +652,9 @@ def draft_bid(project, skill_names, portfolio):
                 "Remove any sentence that isn't essential."
             )})
             response = client.messages.create(
-                model="claude-sonnet-4-5",
+                model="claude-sonnet-4-6",
                 max_tokens=600,
-                system=system_prompt,
+                system=cached_system,
                 messages=messages,
             )
             bid_text = next((b.text for b in response.content if b.type == "text"), bid_text)
