@@ -109,6 +109,8 @@ def load_settings():
 # ---------------------------------------------------------------------------
 # Seen-IDs management
 # ---------------------------------------------------------------------------
+_seen_lock = threading.Lock()  # Guards seen_ids file across poll + websocket threads
+
 def load_seen_ids():
     data = load_json(SEEN_IDS_FILE, {})
     # Migrate legacy list format
@@ -331,12 +333,21 @@ _BLOCKED_CATEGORIES = {
     "reverse-engineering",
     # Design (non-web)
     "logo-design", "graphic-design", "illustration", "caricature-illustration",
-    "3d-modelling", "architecture", "interior-design", "fashion-design",
-    # Media
+    "3d-modelling", "3d-cad", "3ds-max", "maya", "blender", "cinema-4d",
+    "sketchup", "solidworks", "rendering", "landscape-design",
+    "architecture", "interior-design", "fashion-design",
+    # Media / video / audio
     "photography", "video-production", "animation", "motion-graphics",
     "audio-production", "voice-talent", "podcasts",
+    "adobe-premiere-pro", "adobe-after-effects", "adobe-photoshop",
+    "adobe-illustrator", "adobe-indesign", "final-cut-pro", "davinci-resolve",
     # Games
-    "game-development", "unity",
+    "game-development", "unity", "construct-3", "godot", "unreal-engine",
+    "pygame", "cocos2d", "corona-sdk",
+    # Server / sysadmin / security (non-web-hosting)
+    "virtual-private-server", "linux", "server-management",
+    "network-administration", "network-security", "cybersecurity",
+    "ethical-hacking", "penetration-testing",
     # Finance / legal / medical
     "accounting", "bookkeeping", "financial-planning", "legal",
     "medical-writing", "healthcare", "nursing",
@@ -938,12 +949,17 @@ def save_last_run(projects_checked, alerts_sent):
 # Per-project bid pipeline — the ONLY place draft_bid() is called
 # ---------------------------------------------------------------------------
 def mark_seen_immediately(project_id):
-    """Load seen IDs from disk, stamp this ID, and flush back.
-    Called as the very first step of process_project() so a crash
-    mid-pipeline never causes a duplicate bid."""
-    seen = load_seen_ids()
-    seen[str(project_id)] = time.time()
-    cleanup_and_save(seen)
+    """Load seen IDs from disk, stamp this ID, and flush back. Thread-safe.
+    Returns True if the project was NOT yet seen (i.e. we should process it),
+    False if it was already seen (duplicate — skip). The lock prevents the
+    websocket thread and the poll loop from both processing the same project."""
+    with _seen_lock:
+        seen = load_seen_ids()
+        if str(project_id) in seen:
+            return False  # already claimed by another thread
+        seen[str(project_id)] = time.time()
+        cleanup_and_save(seen)
+        return True
 
 
 def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, jobs_dict, country_name):
@@ -958,8 +974,11 @@ def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, 
     link       = project_link(project)
     budget     = fmt_budget(project)
 
-    # STEP 1: Mark seen immediately — no exceptions
-    mark_seen_immediately(project_id)
+    # STEP 1: Mark seen immediately — atomic, thread-safe. Returns False if
+    # another thread (websocket or poll loop) already claimed this project.
+    if not mark_seen_immediately(project_id):
+        log(f"SKIPPED [duplicate - already claimed] {title}")
+        return False
 
     # STEP 2: Eligibility check — MUST happen before Claude
     eligible, skip_reason = check_project_eligibility(project_id, token, my_skill_ids, project)
