@@ -163,6 +163,9 @@ _BLOCKED_COUNTRIES = {
     "kenya", "ethiopia", "egypt", "myanmar", "cambodia",
     "uzbekistan", "kazakhstan", "moldova", "albania", "kosovo",
     "bolivia", "paraguay", "honduras", "guatemala", "el salvador",
+    "morocco", "algeria", "tunisia", "libya", "sudan",
+    "cameroon", "tanzania", "uganda", "zimbabwe", "zambia",
+    "senegal", "ivory coast", "mali", "burkina faso",
 }
 
 _SKILL_KEYWORDS = [
@@ -224,11 +227,24 @@ BLOCKLIST_KEYWORDS = [
     "data entry", "copy paste", "data processing", "text entry",
     "microsoft access", "ms access",
 
-    # Digital marketing
+    # Digital / affiliate marketing
     "facebook ads", "google ads", "paid ads", "ppc", "sem",
     "social media management", "social media marketing",
     "email marketing campaign", "seo audit", "seo strategy",
     "digital marketing strategy", "media buyer",
+    "affiliate marketing", "affiliate program", "affiliate commission",
+    "influencer marketing", "influencer outreach", "brand ambassador",
+    "bulk marketing", "mass marketing", "performance marketing",
+    "promote my app", "promote my product", "app promotion",
+    "product launch", "go-to-market", "launch campaign",
+    "acquire users", "user acquisition", "growth hacking",
+
+    # Team / agency / recruiter projects
+    "team of developers", "team of devs", "team of freelancers",
+    "build and market", "build market and scale", "build, market",
+    "looking for a team", "need a team", "hire a team",
+    "agency preferred", "we are a startup looking",
+    "equity", "revenue share", "revenue sharing",
 
     # Local/physical jobs
     "within 150km", "local job", "on-site", "onsite required",
@@ -260,11 +276,26 @@ BLOCKLIST_KEYWORDS = [
     "deep learning", "neural network", "llm fine", "model training"
 ]
 
-_INDIA_PHRASES = [
-    "inr", "₹", "prayagraj", "looking for indian", "indian developer",
+_BLOCKED_COUNTRY_PHRASES = [
+    # India
+    "inr", "₹", "looking for indian", "indian developer",
     "india based", "india only", "from india", "based in india",
-    # Sri Lanka — catches blank-country-field projects
+    "mumbai", "pune", "bangalore", "bengaluru", "hyderabad",
+    "chennai", "delhi", "kolkata", "ahmedabad", "jaipur",
+    # Nigeria
+    "nigeria", "nigerian", "lagos", "abuja", "port harcourt",
+    # Morocco
+    "morocco", "moroccan", "casablanca", "rabat", "marrakech",
+    # Pakistan
+    "pakistan", "pakistani", "karachi", "lahore", "islamabad",
+    # Bangladesh
+    "bangladesh", "bangladeshi", "dhaka",
+    # Sri Lanka
     "sri lanka", "sri lankan", "lkr", "colombo", "kandy",
+    # Philippines
+    "philippines", "philippine", "manila", "cebu",
+    # Indonesia
+    "indonesia", "indonesian", "jakarta", "surabaya",
 ]
 
 
@@ -281,12 +312,13 @@ def blocklist_match(project):
 
 
 def is_india_project(project):
-    """Return True if description text suggests an India-based client."""
+    """Return True if description text suggests a blocked-country client.
+    Catches projects where the country field is blank in the API response."""
     text = " ".join([
         project.get("title", "") or "",
         project.get("description", "") or "",
     ]).lower()
-    return any(phrase in text for phrase in _INDIA_PHRASES)
+    return any(phrase in text for phrase in _BLOCKED_COUNTRY_PHRASES)
 
 
 def build_country_set(settings):
@@ -352,7 +384,11 @@ _BLOCKED_CATEGORIES = {
     "accounting", "bookkeeping", "financial-planning", "legal",
     "medical-writing", "healthcare", "nursing",
     # Marketing (non-dev)
-    "internet-marketing", "social-media-marketing", "link-building",
+    "affiliate-marketing", "digital-marketing", "internet-marketing",
+    "social-media-marketing", "link-building",
+    # Product / business development
+    "product-development", "product-launch", "business-plans",
+    "startup-development",
     # Science / math
     "statistics", "mathematics", "physics", "chemistry",
 }
@@ -1203,6 +1239,20 @@ def main(bot_state=None):
             log(f"FILTERED [spam client - contacted 20+ freelancers] {title_short}")
             continue
 
+        # High bid count — too many bids already, won't be seen
+        bid_count = int((project.get("bid_stats") or {}).get("bid_count") or 0)
+        if bid_count > 50:
+            counts["spam_client"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [too many bids - {bid_count}] {title_short}")
+            continue
+
+        # Recruiter project — not a direct client engagement
+        if project.get("is_recruiter"):
+            new_seen[proj_id] = now
+            log(f"FILTERED [recruiter project] {title_short}")
+            continue
+
         # Local job filter — requires physical presence
         if project.get("local"):
             counts["local_job"] += 1
@@ -1381,6 +1431,19 @@ def process_single_project(project_id, bot_state):
     if invited > 20:
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [spam client - contacted 20+ freelancers] {title_short}")
+        return
+
+    # High bid count — too many bids already, won't be seen
+    bid_count = int((project.get("bid_stats") or {}).get("bid_count") or 0)
+    if bid_count > 50:
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [too many bids - {bid_count}] {title_short}")
+        return
+
+    # Recruiter project — not a direct client engagement
+    if project.get("is_recruiter"):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [recruiter project] {title_short}")
         return
 
     # Local job filter — requires physical presence
