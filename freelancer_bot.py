@@ -277,25 +277,17 @@ BLOCKLIST_KEYWORDS = [
 ]
 
 _BLOCKED_COUNTRY_PHRASES = [
-    # India
+    # India — currency symbols and explicit self-identification only
     "inr", "₹", "looking for indian", "indian developer",
     "india based", "india only", "from india", "based in india",
-    "mumbai", "pune", "bangalore", "bengaluru", "hyderabad",
-    "chennai", "delhi", "kolkata", "ahmedabad", "jaipur",
-    # Nigeria
-    "nigeria", "nigerian", "lagos", "abuja", "port harcourt",
-    # Morocco
-    "morocco", "moroccan", "casablanca", "rabat", "marrakech",
-    # Pakistan
-    "pakistan", "pakistani", "karachi", "lahore", "islamabad",
-    # Bangladesh
-    "bangladesh", "bangladeshi", "dhaka",
-    # Sri Lanka
-    "sri lanka", "sri lankan", "lkr", "colombo", "kandy",
-    # Philippines
-    "philippines", "philippine", "manila", "cebu",
-    # Indonesia
-    "indonesia", "indonesian", "jakarta", "surabaya",
+    # Sri Lanka — currency code is unambiguous
+    "sri lanka", "sri lankan", "lkr",
+    # Other country names — safe to match (unlikely to appear in legit projects)
+    "nigeria", "nigerian",
+    "morocco", "moroccan",
+    "pakistan", "pakistani",
+    "bangladesh", "bangladeshi",
+    "philippines", "philippine",
 ]
 
 
@@ -1247,12 +1239,6 @@ def main(bot_state=None):
             log(f"FILTERED [too many bids - {bid_count}] {title_short}")
             continue
 
-        # Recruiter project — not a direct client engagement
-        if project.get("is_recruiter"):
-            new_seen[proj_id] = now
-            log(f"FILTERED [recruiter project] {title_short}")
-            continue
-
         # Local job filter — requires physical presence
         if project.get("local"):
             counts["local_job"] += 1
@@ -1438,12 +1424,6 @@ def process_single_project(project_id, bot_state):
     if bid_count > 50:
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [too many bids - {bid_count}] {title_short}")
-        return
-
-    # Recruiter project — not a direct client engagement
-    if project.get("is_recruiter"):
-        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
-        log(f"FILTERED [recruiter project] {title_short}")
         return
 
     # Local job filter — requires physical presence
