@@ -383,6 +383,26 @@ _BLOCKED_CATEGORIES = {
     "startup-development",
     # Science / math
     "statistics", "mathematics", "physics", "chemistry",
+    # Tutoring / language
+    "chinese-tutoring", "english-tutoring", "language-tutoring", "tutoring",
+    # Machine learning / BI tools
+    "machine-learning", "tableau", "power-bi", "business-intelligence",
+    # Writing (additional variants)
+    "articles", "content-writing", "blogging",
+    # Geotechnical / specialist engineering
+    "geotechnical-engineering",
+    # PCB variant slugs
+    "pcb-design-and-layout",
+    # Finance
+    "financial-analysis", "financial-modeling", "financial-planning",
+    # Audio / media services
+    "audio-services", "audio-editing",
+    # Research
+    "research",
+    # ERP / specialist platforms (require platform-specific skills)
+    "dynamic-365", "sap",
+    # Blockchain / crypto
+    "blockchain", "ethereum", "solidity", "defi", "nft",
 }
 
 
@@ -775,12 +795,16 @@ def check_project_eligibility(project_id, token, my_skill_ids, project=None):
         if client_country and client_country.lower() in _BLOCKED_COUNTRIES:
             return False, f"SILENT:Blocked country from project details ({client_country})"
 
-        # Check 2: non-English language field
+        # Check 2: NDA requirement — catch before calling Claude
+        if upgrades.get("nda"):
+            return False, "NDA:NDA signature required"
+
+        # Check 3: non-English language field
         lang = (proj.get("language") or "").strip().lower()
         if lang and lang != "en":
             return False, f"SILENT:Non-English project (language={lang})"
 
-        # Check 3: required skills the bidder doesn't have
+        # Check 4: required skills the bidder doesn't have
         if my_skill_ids:
             required_jobs = proj.get("jobs", []) or []
             required_ids  = {str(j.get("id")) for j in required_jobs if j.get("id")}
@@ -1011,11 +1035,23 @@ def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, 
     # STEP 2: Eligibility check — MUST happen before Claude
     eligible, skip_reason = check_project_eligibility(project_id, token, my_skill_ids, project)
     if not eligible:
-        silent         = skip_reason.startswith("SILENT:")
-        display_reason = skip_reason[7:] if silent else skip_reason
-        log(f"SKIPPED [eligibility] {title} — {display_reason}")
-        if not silent:
-            send_telegram(f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}", tg_token, tg_chat)
+        if skip_reason.startswith("NDA:"):
+            log(f"NDA REQUIRED [eligibility] {title}")
+            send_telegram(
+                f"📝 NDA PROJECT\n\n"
+                f"📋 Project: {title}\n"
+                f"🔗 {link}\n"
+                f"💰 Budget: {budget}\n"
+                f"🌍 Country: {country_name}\n\n"
+                f"Sign the NDA at the project page, then bid manually.",
+                tg_token, tg_chat,
+            )
+        else:
+            silent         = skip_reason.startswith("SILENT:")
+            display_reason = skip_reason[7:] if silent else skip_reason
+            log(f"SKIPPED [eligibility] {title} — {display_reason}")
+            if not silent:
+                send_telegram(f"⛔ SKIPPED - {display_reason}:\n{title}\n{link}", tg_token, tg_chat)
         return False
 
     log(f"ELIGIBLE: {title} — calling Claude now")
