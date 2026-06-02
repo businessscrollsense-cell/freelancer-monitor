@@ -277,16 +277,23 @@ BLOCKLIST_KEYWORDS = [
 ]
 
 _BLOCKED_COUNTRY_PHRASES = [
-    # India — currency symbols and explicit self-identification only
+    # India — currency symbols and self-identification
     "inr", "₹", "looking for indian", "indian developer",
     "india based", "india only", "from india", "based in india",
+    # India — major cities (unambiguous; won't appear in AU/UK/US project descriptions)
+    "mumbai", "pune", "bengaluru", "bangalore", "hyderabad",
+    "chennai", "new delhi", "ahmedabad", "kolkata",
     # Sri Lanka — currency code is unambiguous
     "sri lanka", "sri lankan", "lkr",
-    # Other country names — safe to match (unlikely to appear in legit projects)
+    # Nigeria
     "nigeria", "nigerian",
+    # Morocco
     "morocco", "moroccan",
+    # Pakistan
     "pakistan", "pakistani",
+    # Bangladesh
     "bangladesh", "bangladeshi",
+    # Philippines
     "philippines", "philippine",
 ]
 
@@ -792,6 +799,7 @@ def check_project_eligibility(project_id, token, my_skill_ids, project=None):
             (owner_detail.get("location") or {})
             .get("country", {}) or {}
         ).get("name", "") or ""
+        log(f"Eligibility country check: project {project_id} owner country = '{client_country or 'BLANK'}'")
         if client_country and client_country.lower() in _BLOCKED_COUNTRIES:
             return False, f"SILENT:Blocked country from project details ({client_country})"
 
