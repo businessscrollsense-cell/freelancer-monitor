@@ -173,7 +173,7 @@ _SKILL_KEYWORDS = [
     "web app", "web application", "website design", "website build",
     "website development", "figma", "html", "css", "javascript",
     "react", "next.js", "node.js", "typescript", "bootstrap", "tailwind",
-    "mysql", "postgresql", "database", "rest api", "graphql", "api integration",
+    "mysql", "postgresql", "rest api", "graphql", "api integration",
     "saas platform", "saas build", "saas develop", "crm build", "crm develop",
     "ecommerce", "shopify", "woocommerce", "stripe integration",
     "flutter", "dart", "react native", "lms", "learning management",
