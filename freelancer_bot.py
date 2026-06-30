@@ -245,6 +245,9 @@ BLOCKLIST_KEYWORDS = [
     "looking for a team", "need a team", "hire a team",
     "agency preferred", "we are a startup looking",
     "equity", "revenue share", "revenue sharing",
+    "white label", "white-label", "subcontractor", "sub-contractor",
+    "no direct client contact", "no direct client communication",
+    "reseller", "outsourcing partner", "ongoing pipeline of projects",
 
     # Local/physical jobs
     "within 150km", "local job", "on-site", "onsite required",
