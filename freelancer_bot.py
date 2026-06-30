@@ -300,6 +300,30 @@ _BLOCKED_COUNTRY_PHRASES = [
     "philippines", "philippine",
 ]
 
+# Structured-data city check (client's profile city field, not description text).
+# More reliable than text matching — works even when currency is USD and the
+# project description never mentions location at all.
+_BLOCKED_OWNER_CITIES = {
+    "mumbai", "pune", "bengaluru", "bangalore", "hyderabad", "chennai",
+    "new delhi", "delhi", "ahmedabad", "kolkata", "jaipur", "surat",
+    "lucknow", "kanpur", "nagpur", "indore", "noida", "gurgaon",
+    "gurugram", "chandigarh", "coimbatore", "thane", "navi mumbai",
+    "vadodara", "bhopal", "patna", "ludhiana", "agra", "nashik",
+    "faridabad", "meerut", "rajkot", "varanasi", "kochi", "vijayawada",
+    "karachi", "lahore", "islamabad", "rawalpindi", "faisalabad",
+    "dhaka", "chittagong",
+    "colombo", "kandy",
+    "lagos", "abuja", "port harcourt", "ibadan", "kano",
+    "casablanca", "rabat", "marrakech", "fes",
+    "manila", "cebu", "davao", "quezon city",
+}
+
+def owner_city_blocked(owner):
+    """Return True if the client's profile city field is in a blocked-country city.
+    Catches India-based clients who list budgets in USD with no country/currency tell."""
+    city = ((owner.get("location") or {}).get("city") or "").strip().lower()
+    return city in _BLOCKED_OWNER_CITIES
+
 
 def blocklist_match(project):
     """Return the first matching blocklist keyword, or None."""
@@ -802,9 +826,12 @@ def check_project_eligibility(project_id, token, my_skill_ids, project=None):
             (owner_detail.get("location") or {})
             .get("country", {}) or {}
         ).get("name", "") or ""
-        log(f"Eligibility country check: project {project_id} owner country = '{client_country or 'BLANK'}'")
+        client_city = ((owner_detail.get("location") or {}).get("city") or "")
+        log(f"Eligibility country check: project {project_id} owner country = '{client_country or 'BLANK'}' city = '{client_city or 'BLANK'}'")
         if client_country and client_country.lower() in _BLOCKED_COUNTRIES:
             return False, f"SILENT:Blocked country from project details ({client_country})"
+        if owner_city_blocked(owner_detail):
+            return False, f"SILENT:Blocked city from project details ({client_city})"
 
         # Check 2: NDA requirement — catch before calling Claude
         if upgrades.get("nda"):
@@ -1225,6 +1252,13 @@ def main(bot_state=None):
             log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
             continue
 
+        if owner_city_blocked(owner):
+            counts["country"] += 1
+            new_seen[proj_id] = now
+            owner_city = ((owner.get("location") or {}).get("city") or "")
+            log(f"FILTERED [country] {title_short} city=\"{owner_city}\" (currency was {(project.get('currency') or {}).get('code', '?')})")
+            continue
+
         if (project.get("currency") or {}).get("code", "") == "INR":
             counts["currency"] += 1
             new_seen[proj_id] = now
@@ -1412,6 +1446,11 @@ def process_single_project(project_id, bot_state):
     if not country_allowed(country_name, allowed):
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
+        return
+
+    if owner_city_blocked(owner):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [country] {title_short} city=\"{location.get('city', '')}\"")
         return
 
     # Currency filter
