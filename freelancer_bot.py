@@ -202,6 +202,11 @@ BLOCKLIST_KEYWORDS = [
     "phone outreach", "outbound calling", "call businesses",
     "customer service representative", "customer service agent",
     "customer support agent", "live chat agent", "chat support agent",
+    "sales closer", "deal closer", "closer needed", "closer wanted",
+    "client support liaison", "support liaison", "client support representative",
+    "guest communication", "guest support", "guest services",
+    "english speaking client support", "english speaking support",
+    "virtual assistant", "personal assistant needed",
 
     # Creative/design non-web
     "logo design", "graphic design", "brochure", "flyer",
@@ -276,7 +281,11 @@ BLOCKLIST_KEYWORDS = [
 
     # ML / computer vision
     "pose estimation", "computer vision", "nlp model", "machine learning pipeline",
-    "deep learning", "neural network", "llm fine", "model training"
+    "deep learning", "neural network", "llm fine", "model training",
+
+    # Legacy languages / forensics (outside web dev stack)
+    "cobol", "mainframe", "phone forensic", "computer forensic",
+    "forensic recovery", "data recovery",
 ]
 
 _BLOCKED_COUNTRY_PHRASES = [
@@ -359,7 +368,7 @@ def build_country_set(settings):
 
 def country_allowed(country_name, allowed_set):
     if not country_name:
-        return True  # Unknown country — let it through
+        return False  # Unknown country — deny by default, this was the main leak
     name_lower = country_name.lower()
     if name_lower in _BLOCKED_COUNTRIES:
         return False  # Explicit blocklist takes priority
@@ -437,6 +446,12 @@ _BLOCKED_CATEGORIES = {
     "dynamic-365", "sap",
     # Blockchain / crypto
     "blockchain", "ethereum", "solidity", "defi", "nft",
+    # Legacy / niche languages outside web stack
+    "cobol", "mainframe", "fortran", "pascal", "delphi",
+    # Forensics / recovery (not web dev)
+    "digital-forensics", "computer-forensics", "data-recovery",
+    # Tutoring/teaching (not web dev)
+    "english-teaching",
 }
 
 
