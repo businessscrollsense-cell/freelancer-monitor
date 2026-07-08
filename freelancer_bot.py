@@ -292,21 +292,64 @@ _BLOCKED_COUNTRY_PHRASES = [
     # India — currency symbols and self-identification
     "inr", "₹", "looking for indian", "indian developer",
     "india based", "india only", "from india", "based in india",
+    "hiring from india", "must be from india", "indians only",
+    "indian standard time", "ist timezone", "ist time zone", "+91",
     # India — major cities (unambiguous; won't appear in AU/UK/US project descriptions)
     "mumbai", "pune", "bengaluru", "bangalore", "hyderabad",
-    "chennai", "new delhi", "ahmedabad", "kolkata",
-    # Sri Lanka — currency code is unambiguous
-    "sri lanka", "sri lankan", "lkr",
+    "chennai", "new delhi", "ahmedabad", "kolkata", "jaipur", "surat",
+    "lucknow", "kanpur", "nagpur", "indore", "noida", "gurgaon",
+    "gurugram", "chandigarh", "coimbatore", "vadodara", "bhopal",
+    "patna", "ludhiana", "visakhapatnam", "amritsar", "bhubaneswar",
+    "guwahati", "ranchi", "jodhpur", "madurai", "mysuru", "mysore",
+    "mangalore", "thiruvananthapuram", "trivandrum",
+    # Sri Lanka
+    "sri lanka", "sri lankan", "lkr", "colombo", "kandy", "+94",
     # Nigeria
-    "nigeria", "nigerian",
+    "nigeria", "nigerian", "naira", "lagos", "abuja", "+234",
     # Morocco
-    "morocco", "moroccan",
+    "morocco", "moroccan", "casablanca", "rabat", "marrakech", "+212",
     # Pakistan
-    "pakistan", "pakistani",
+    "pakistan", "pakistani", "pkr", "karachi", "lahore", "islamabad",
+    "rawalpindi", "faisalabad", "sialkot", "multan", "peshawar",
+    "gujranwala", "quetta", "+92",
     # Bangladesh
-    "bangladesh", "bangladeshi",
+    "bangladesh", "bangladeshi", "bdt", "dhaka", "chittagong",
+    "sylhet", "khulna", "rajshahi", "+880",
     # Philippines
-    "philippines", "philippine",
+    "philippines", "philippine", "manila", "cebu", "davao", "+63",
+    # Rest of the structural blocklist — name/demonym only, no city coverage yet
+    "indonesian", "indonesia", "rupiah",
+    "vietnamese", "vietnam",
+    "nepali", "nepal",
+    "ghanaian", "ghana",
+    "kenyan", "kenya",
+    "ethiopian", "ethiopia",
+    "egyptian", "egypt",
+    "myanmar", "burmese",
+    "cambodian", "cambodia",
+    "uzbekistan", "uzbek",
+    "kazakhstan", "kazakh",
+    "moldovan", "moldova",
+    "albanian", "albania",
+    "kosovan", "kosovo",
+    "bolivian", "bolivia",
+    "paraguayan", "paraguay",
+    "honduran", "honduras",
+    "guatemalan", "guatemala",
+    "salvadoran", "el salvador",
+    "algerian", "algeria",
+    "tunisian", "tunisia",
+    "libyan", "libya",
+    "sudanese", "sudan",
+    "cameroonian", "cameroon",
+    "tanzanian", "tanzania",
+    "ugandan", "uganda",
+    "zimbabwean", "zimbabwe",
+    "zambian", "zambia",
+    "senegalese", "senegal",
+    "ivorian", "ivory coast",
+    "malian",
+    "burkinabe", "burkina faso",
 ]
 
 # Structured-data city check (client's profile city field, not description text).
