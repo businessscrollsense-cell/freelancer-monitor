@@ -368,7 +368,12 @@ def build_country_set(settings):
 
 def country_allowed(country_name, allowed_set):
     if not country_name:
-        return False  # Unknown country — deny by default, this was the main leak
+        # Freelancer's API no longer returns owner/user details for this token
+        # (owner_id and users are null on every project as of 2026-07) — country
+        # is unknown for 100% of projects, not just the untrustworthy ones. Denying
+        # by default here blocks every project. Text-based signals (is_india_project,
+        # currency, language) are the real filters until owner data comes back.
+        return True
     name_lower = country_name.lower()
     if name_lower in _BLOCKED_COUNTRIES:
         return False  # Explicit blocklist takes priority
