@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -763,14 +764,26 @@ def draft_bid(project, skill_names, portfolio):
     )
 
     def clean(text):
-        return (
-            text
-            .replace("—", "-")
-            .replace("–", "-")
-            .replace(" - ", " ")
-            .replace("- ", "")
-            .replace("* http", "- http")
-        )
+        # Dashes get replaced with proper punctuation, never deleted outright —
+        # blind deletion used to splice two clauses together with no separator
+        # at all, producing run-on sentences with no grammar.
+        lines = text.split("\n")
+        cleaned_lines = []
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith("- "):
+                cleaned_lines.append(line)  # portfolio link bullet, leave alone
+                continue
+            if stripped.startswith("* "):
+                indent = line[: len(line) - len(stripped)]
+                cleaned_lines.append(indent + "-" + stripped[1:])  # normalize to hyphen bullet
+                continue
+            line = re.sub(r"\s*[—–]\s*", ", ", line)
+            line = re.sub(r"\s+-\s+", ", ", line)
+            line = re.sub(r",\s*,", ",", line)
+            line = re.sub(r"\s+,", ",", line)
+            cleaned_lines.append(line)
+        return "\n".join(cleaned_lines)
 
     def word_count(text):
         return len(text.split())
@@ -782,7 +795,7 @@ def draft_bid(project, skill_names, portfolio):
         # Cache TTL is 5 minutes; with 30-second polling the cache stays warm.
         cached_system = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-5",
             max_tokens=600,
             system=cached_system,
             messages=messages,
@@ -808,7 +821,7 @@ def draft_bid(project, skill_names, portfolio):
                 "Remove any sentence that isn't essential."
             )})
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-sonnet-5",
                 max_tokens=600,
                 system=cached_system,
                 messages=messages,
