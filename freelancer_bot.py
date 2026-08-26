@@ -796,7 +796,7 @@ def draft_bid(project, skill_names, portfolio):
         cached_system = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
         response = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=600,
+            max_tokens=1600,
             system=cached_system,
             messages=messages,
         )
@@ -804,8 +804,11 @@ def draft_bid(project, skill_names, portfolio):
         log(
             f"Claude usage — input: {usage.input_tokens} "
             f"(cached: {getattr(usage, 'cache_read_input_tokens', 0)}) "
-            f"output: {usage.output_tokens}"
+            f"output: {usage.output_tokens} stop_reason: {response.stop_reason}"
         )
+        if response.stop_reason == "max_tokens":
+            log("Bid drafting hit max_tokens before finishing — discarding incomplete bid.", "warning")
+            return None
         bid_text = next((b.text for b in response.content if b.type == "text"), None)
         if not bid_text:
             return None
@@ -822,13 +825,16 @@ def draft_bid(project, skill_names, portfolio):
             )})
             response = client.messages.create(
                 model="claude-sonnet-5",
-                max_tokens=600,
+                max_tokens=1600,
                 system=cached_system,
                 messages=messages,
             )
-            bid_text = next((b.text for b in response.content if b.type == "text"), bid_text)
-            bid_text = clean(bid_text)
-            wc = word_count(bid_text)
+            if response.stop_reason == "max_tokens":
+                log("Trim retry hit max_tokens — keeping the pre-trim bid instead.", "warning")
+            else:
+                bid_text = next((b.text for b in response.content if b.type == "text"), bid_text)
+                bid_text = clean(bid_text)
+                wc = word_count(bid_text)
 
         log(f"Bid written: {wc} words")
         return bid_text
