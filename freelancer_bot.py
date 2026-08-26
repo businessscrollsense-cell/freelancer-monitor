@@ -167,6 +167,24 @@ _BLOCKED_COUNTRIES = {
     "morocco", "algeria", "tunisia", "libya", "sudan",
     "cameroon", "tanzania", "uganda", "zimbabwe", "zambia",
     "senegal", "ivory coast", "mali", "burkina faso",
+    # Added 2026-08-26 — narrowing further to 1st-world-only bidding
+    "brazil", "mexico", "argentina", "colombia", "peru", "venezuela",
+    "ecuador", "russia", "ukraine", "belarus", "china", "thailand",
+    "malaysia", "mongolia", "iran", "iraq", "turkey", "armenia",
+    "azerbaijan", "lebanon", "syria", "yemen", "laos",
+}
+
+# Currency codes for countries not in the allowed set. Only included where the
+# code is unambiguous (i.e. the country doesn't use USD/EUR, which would risk
+# blocking a legitimate US/European client). currency.code is a structured API
+# field, not free text, so there's no substring-collision risk here.
+_BLOCKED_CURRENCIES = {
+    "INR", "NGN", "PKR", "BDT", "IDR", "PHP", "NPR", "LKR", "GHS", "KES",
+    "ETB", "EGP", "MMK", "KHR", "UZS", "KZT", "MDL", "BOB", "PYG", "HNL",
+    "GTQ", "MAD", "DZD", "TND", "LYD", "SDG", "XAF", "XOF", "ZMW", "UGX",
+    "TZS", "BRL", "MXN", "ARS", "COP", "PEN", "VES", "RUB", "UAH", "BYN",
+    "CNY", "THB", "MYR", "MNT", "IRR", "IQD", "TRY", "GEL", "AMD", "AZN",
+    "JOD", "LBP", "SYP", "YER", "LAK",
 }
 
 _SKILL_KEYWORDS = [
@@ -351,6 +369,36 @@ _BLOCKED_COUNTRY_PHRASES = [
     "ivorian", "ivory coast",
     "malian",
     "burkinabe", "burkina faso",
+    # Added 2026-08-26 — narrowing further to 1st-world-only bidding.
+    # "georgia"/"georgian" and bare "jordan" deliberately excluded — collide
+    # with the US state and the common first name. Currency codes (GEL, JOD)
+    # and capital cities still catch those two.
+    "brazil", "brazilian", "brl", "sao paulo", "rio de janeiro", "brasilia", "+55",
+    "mexico", "mexican", "mxn", "mexico city", "guadalajara", "monterrey", "+52",
+    "argentina", "argentine", "argentinian", "ars", "buenos aires", "+54",
+    "colombia", "colombian", "cop peso", "bogota", "medellin", "+57",
+    "peru", "peruvian", "pen", "lima peru", "+51",
+    "venezuela", "venezuelan", "caracas", "+58",
+    "ecuador", "ecuadorian", "quito", "guayaquil", "+593",
+    "russia", "russian", "rub", "ruble", "moscow", "saint petersburg", "+7",
+    "ukraine", "ukrainian", "uah", "hryvnia", "kyiv", "kiev", "+380",
+    "belarus", "belarusian", "byn", "minsk", "+375",
+    "china", "chinese", "cny", "rmb", "yuan", "beijing", "shanghai",
+    "shenzhen", "guangzhou", "+86",
+    "thailand", "thai", "thb", "baht", "bangkok", "+66",
+    "malaysia", "malaysian", "myr", "ringgit", "kuala lumpur", "+60",
+    "mongolia", "mongolian", "ulaanbaatar", "+976",
+    "iran", "iranian", "irr", "tehran", "+98",
+    "iraq", "iraqi", "iqd", "baghdad", "+964",
+    "turkey", "turkish", "istanbul", "ankara", "+90",
+    "tbilisi", "gel lari",
+    "armenian", "yerevan", "+374",
+    "azerbaijan", "azerbaijani", "baku", "+994",
+    "jordanian", "amman", "+962",
+    "lebanon", "lebanese", "beirut", "+961",
+    "syria", "syrian", "damascus", "+963",
+    "yemen", "yemeni", "sanaa", "+967",
+    "laos", "laotian", "vientiane", "+856",
 ]
 
 # Structured-data city check (client's profile city field, not description text).
@@ -916,8 +964,18 @@ def check_project_eligibility(project_id, token, my_skill_ids, project=None):
             return False, f"SILENT:Blocked city from project details ({client_city})"
 
         # Check 2: NDA requirement — catch before calling Claude
-        if upgrades.get("nda"):
+        # Freelancer's API returns this key as "NDA" (uppercase), not "nda" —
+        # the lowercase-only lookup below never matched, so this never fired.
+        if upgrades.get("NDA") or upgrades.get("nda"):
             return False, "NDA:NDA signature required"
+
+        # Check 2b: invite-only / qualified-bidders-only projects — these
+        # reject the bid at submission with "not allowed" / "preferred
+        # bidders only", so catch them here before spending a Claude call.
+        if upgrades.get("nonpublic"):
+            return False, "SILENT:Private/invite-only project"
+        if upgrades.get("qualified"):
+            return False, "SILENT:Qualified-bidders-only project"
 
         # Check 3: non-English language field
         lang = (proj.get("language") or "").strip().lower()
@@ -1341,10 +1399,11 @@ def main(bot_state=None):
             log(f"FILTERED [country] {title_short} city=\"{owner_city}\" (currency was {(project.get('currency') or {}).get('code', '?')})")
             continue
 
-        if (project.get("currency") or {}).get("code", "") == "INR":
+        proj_currency = (project.get("currency") or {}).get("code", "")
+        if proj_currency in _BLOCKED_CURRENCIES:
             counts["currency"] += 1
             new_seen[proj_id] = now
-            log(f"FILTERED [currency] {title_short} budget={fmt_budget(project)}")
+            log(f"FILTERED [currency] {title_short} currency={proj_currency} budget={fmt_budget(project)}")
             continue
 
         if not is_english(project):
@@ -1536,9 +1595,10 @@ def process_single_project(project_id, bot_state):
         return
 
     # Currency filter
-    if (project.get("currency") or {}).get("code", "") == "INR":
+    ws_currency = (project.get("currency") or {}).get("code", "")
+    if ws_currency in _BLOCKED_CURRENCIES:
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
-        log(f"FILTERED [currency] {title_short}")
+        log(f"FILTERED [currency] {title_short} currency={ws_currency}")
         return
 
     # Language filter
