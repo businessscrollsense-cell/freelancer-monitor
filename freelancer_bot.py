@@ -56,6 +56,17 @@ def log(msg, level="info"):
     getattr(logging, level)(msg)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
+def safe_err(e, limit=300):
+    """Stringify an exception, hard-capped to `limit` chars. Some exceptions
+    (SDK/HTTP error bodies) can embed the entire request or response —
+    including a full project description or prompt — in their message.
+    Logging that uncapped can flood Railway's own log-rate limit and get
+    real log lines silently dropped (confirmed 2026-09-29). Every
+    `except Exception as e:` log call in this file should route through
+    this instead of interpolating {e} directly."""
+    s = str(e)
+    return s if len(s) <= limit else s[:limit] + "…[truncated]"
+
 # ---------------------------------------------------------------------------
 # JSON helpers
 # ---------------------------------------------------------------------------
@@ -72,7 +83,7 @@ def save_json(path, data):
             json.dump(data, f, indent=2)
         return True
     except Exception as e:
-        log(f"Could not write {path}: {e}", "error")
+        log(f"Could not write {path}: {safe_err(e)}", "error")
         return False
 
 # ---------------------------------------------------------------------------
@@ -153,7 +164,7 @@ def fetch_projects(token):
     except requests.exceptions.Timeout:
         log("Freelancer API request timed out.", "error")
     except Exception as e:
-        log(f"Freelancer API request failed: {e}", "error")
+        log(f"Freelancer API request failed: {safe_err(e)}", "error")
     return {}
 
 # ---------------------------------------------------------------------------
@@ -557,7 +568,7 @@ def fetch_client_country(seo_url):
         address = ((data.get("result") or {}).get("client") or {}).get("address") or {}
         return address.get("country") or None, address.get("city") or None
     except Exception as e:
-        log(f"Client-country lookup failed for {seo_url}: {e}", "warning")
+        log(f"Client-country lookup failed for {seo_url}: {safe_err(e)}", "warning")
         return None, None
 
 
@@ -1084,7 +1095,7 @@ def draft_bid(project, skill_names, portfolio, country_name=""):
         log(f"Bid written: {wc} words")
         return bid_text
     except Exception as e:
-        log(f"Bid drafting failed: {e}", "warning")
+        log(f"Bid drafting failed: {safe_err(e)}", "warning")
         return None
 
 def log_portfolio_chosen(bid_text, portfolio):
@@ -1119,7 +1130,7 @@ def fetch_my_skill_ids(token):
         log(f"Registered skills ({len(ids)}): {', '.join(sorted(names))}")
         return ids
     except Exception as e:
-        log(f"Could not fetch skill IDs: {e} — skill check disabled.", "warning")
+        log(f"Could not fetch skill IDs: {safe_err(e)} — skill check disabled.", "warning")
         return set()
 
 
@@ -1200,7 +1211,7 @@ def check_project_eligibility(project_id, token, my_skill_ids, project=None):
             project["eligibility_confirmed"] = True
         return True, None
     except Exception as e:
-        log(f"Pre-bid eligibility check error for {project_id}: {e} — blocking to avoid wasted Claude call.", "warning")
+        log(f"Pre-bid eligibility check error for {project_id}: {safe_err(e)} — blocking to avoid wasted Claude call.", "warning")
         return False, "SILENT:Pre-bid check exception"
 
 
@@ -1288,7 +1299,7 @@ def submit_bid(project, bid_text, amount, token):
         log(f"Bid submission failed ({resp.status_code}): {reason}", "warning")
         return False, reason
     except Exception as e:
-        log(f"Bid submission error: {e}", "warning")
+        log(f"Bid submission error: {safe_err(e)}", "warning")
         return False, str(e)
 
 # ---------------------------------------------------------------------------
@@ -1310,7 +1321,7 @@ def send_telegram(message, bot_token, chat_id):
             return True
         log(f"Telegram error {resp.status_code}: {resp.text[:200]}", "error")
     except Exception as e:
-        log(f"Telegram send failed: {e}", "error")
+        log(f"Telegram send failed: {safe_err(e)}", "error")
     return False
 
 # ---------------------------------------------------------------------------
@@ -1355,7 +1366,7 @@ def telegram_command_listener(bot_token, chat_id, bot_state):
                     else:
                         send_telegram("✅ Bot is running. Scanning every 30 seconds.", bot_token, chat_id)
         except Exception as e:
-            log(f"Command listener error: {e}", "warning")
+            log(f"Command listener error: {safe_err(e)}", "warning")
             time.sleep(5)
 
 
@@ -1562,7 +1573,7 @@ def main(bot_state=None):
         skill_names  = [s.get("name", "") for s in skills if s.get("name")]
         log(f"Registered skills ({len(my_skill_ids)}): {', '.join(sorted(skill_names))}")
     except Exception as e:
-        log(f"ERROR: Could not fetch Freelancer user ID — bids will fail. Check FREELANCER_TOKEN. ({e})", "error")
+        log(f"ERROR: Could not fetch Freelancer user ID — bids will fail. Check FREELANCER_TOKEN. ({safe_err(e)})", "error")
 
     # Load portfolio once at startup
     portfolio = load_json(PORTFOLIO_FILE, [])
@@ -1764,7 +1775,7 @@ def fetch_project_by_id(project_id, token):
             return project, users, jobs_dict
         log(f"Websocket: project fetch failed ({resp.status_code}) for ID {project_id}", "warning")
     except Exception as e:
-        log(f"Websocket: project fetch error for ID {project_id}: {e}", "warning")
+        log(f"Websocket: project fetch error for ID {project_id}: {safe_err(e)}", "warning")
     return None, {}, {}
 
 
@@ -1792,7 +1803,7 @@ def process_single_project(project_id, bot_state):
         jobs   = (me.get("result") or {}).get("jobs", []) or []
         my_skill_ids = {str(s.get("id")) for s in jobs if s.get("id")}
     except Exception as e:
-        log(f"Websocket: could not fetch skill IDs: {e}", "warning")
+        log(f"Websocket: could not fetch skill IDs: {safe_err(e)}", "warning")
 
     portfolio = load_json(PORTFOLIO_FILE, [])
     seen_ids  = load_seen_ids()
@@ -1903,7 +1914,7 @@ def ws_processor(bot_state):
         try:
             process_single_project(project_id, bot_state)
         except Exception as e:
-            log(f"Websocket processor error for project {project_id}: {e}", "warning")
+            log(f"Websocket processor error for project {project_id}: {safe_err(e)}", "warning")
         finally:
             _ws_queue.task_done()
 
@@ -1987,7 +1998,7 @@ def listen_websocket(bot_state):
             )
             ws.run_forever(ping_interval=30, ping_timeout=10)
         except Exception as e:
-            log(f"WEBSOCKET: Crashed — {e}", "warning")
+            log(f"WEBSOCKET: Crashed — {safe_err(e)}", "warning")
         _reconnect_count[0] += 1
         time.sleep(5)
 
