@@ -36,6 +36,7 @@ PORTFOLIO_FILE  = os.path.join(SCRIPT_DIR, "portfolio.json")
 SEEN_IDS_FILE   = os.path.join(SCRIPT_DIR, "seen_ids.json")
 RECENT_FILE     = os.path.join(SCRIPT_DIR, "recent_alerts.json")
 LAST_RUN_FILE   = os.path.join(SCRIPT_DIR, "last_run.json")
+BOT_STATE_FILE  = os.path.join(SCRIPT_DIR, "bot_state.json")
 LOG_FILE        = os.path.join(SCRIPT_DIR, "bot.log")
 
 FREELANCER_API  = "https://www.freelancer.com/api/projects/0.1"
@@ -1146,13 +1147,7 @@ def check_project_eligibility(project_id, token, my_skill_ids, project=None):
         if owner_city_blocked(owner_detail):
             return False, f"SILENT:Blocked city from project details ({client_city})"
 
-        # Check 2: NDA requirement — catch before calling Claude
-        # Freelancer's API returns this key as "NDA" (uppercase), not "nda" —
-        # the lowercase-only lookup below never matched, so this never fired.
-        if upgrades.get("NDA") or upgrades.get("nda"):
-            return False, "NDA:NDA signature required"
-
-        # Check 2b: invite-only / qualified-bidders-only projects — these
+        # Check 2: invite-only / qualified-bidders-only projects — these
         # reject the bid at submission with "not allowed" / "preferred
         # bidders only", so catch them here before spending a Claude call.
         if upgrades.get("nonpublic"):
@@ -1172,6 +1167,21 @@ def check_project_eligibility(project_id, token, my_skill_ids, project=None):
             missing = required_ids - my_skill_ids
             if missing:
                 return False, f"Missing required skills (IDs: {', '.join(sorted(missing))})"
+
+        # Check 5: NDA requirement — checked LAST, after every other blocker,
+        # because unlike the others this one still gets a bid drafted (the
+        # user signs the NDA and pastes it in manually) — no point spending
+        # a Claude call on a project that's also nonpublic/wrong-language/
+        # missing-skills and would be rejected anyway.
+        # Freelancer's API returns this key as "NDA" (uppercase), not "nda" —
+        # a lowercase-only lookup here previously never matched, so this
+        # never fired.
+        if upgrades.get("NDA") or upgrades.get("nda"):
+            if project is not None:
+                # Safe to draft (not auto-submit) — every other check above
+                # already passed; NDA is the only remaining blocker.
+                project["eligibility_confirmed"] = True
+            return False, "NDA:NDA signature required"
 
         if project is not None:
             project["eligibility_confirmed"] = True
@@ -1318,10 +1328,12 @@ def telegram_command_listener(bot_token, chat_id, bot_state):
                     continue
                 if text == "/pause":
                     bot_state["paused"] = True
+                    save_json(BOT_STATE_FILE, {"paused": True})
                     log("Bot paused via Telegram command.")
                     send_telegram("⏸ Bot paused. Send /play to resume.", bot_token, chat_id)
                 elif text == "/play":
                     bot_state["paused"] = False
+                    save_json(BOT_STATE_FILE, {"paused": False})
                     log("Bot resumed via Telegram command.")
                     send_telegram("✅ Bot resumed. Scanning every 30 seconds.", bot_token, chat_id)
                 elif text == "/status":
@@ -1379,8 +1391,11 @@ def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, 
     """Single authoritative pipeline: mark seen → eligibility → Claude → submit.
 
     This is the ONLY function in the file that calls draft_bid().
-    draft_bid() is physically unreachable unless check_project_eligibility()
-    returns True — there is no other code path that reaches it.
+    draft_bid() is physically unreachable unless project["eligibility_confirmed"]
+    was set True by check_project_eligibility() — which happens when it returns
+    True (fully eligible, auto-submit path) OR when it returns False with an
+    "NDA:" reason (every other check passed, drafted for manual paste-in only,
+    never auto-submitted — see the NDA branch below).
     """
     project_id = str(project.get("id", ""))
     title      = project.get("title", "")[:80]
@@ -1398,15 +1413,35 @@ def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, 
     if not eligible:
         if skip_reason.startswith("NDA:"):
             log(f"NDA REQUIRED [eligibility] {title}")
-            send_telegram(
-                f"📝 NDA PROJECT\n\n"
-                f"📋 Project: {title}\n"
-                f"🔗 {link}\n"
-                f"💰 Budget: {budget}\n"
-                f"🌍 Country: {country_name}\n\n"
-                f"Sign the NDA at the project page, then bid manually.",
-                tg_token, tg_chat,
-            )
+            # Everything else already passed check_project_eligibility() —
+            # NDA is the only blocker — so draft a real bid the user can
+            # paste in manually after signing, instead of leaving them to
+            # write one from scratch.
+            skill_names = get_skill_names(project, jobs_dict)
+            bid_text    = draft_bid(project, skill_names, portfolio, country_name)
+            SEP = "─" * 25
+            if bid_text:
+                send_telegram(
+                    f"📝 NDA PROJECT\n\n"
+                    f"📋 Project: {title}\n"
+                    f"🔗 {link}\n"
+                    f"💰 Budget: {budget}\n"
+                    f"🌍 Country: {country_name}\n\n"
+                    f"Sign the NDA at the project page, then paste this bid manually:\n\n"
+                    f"{SEP}\n\n{bid_text}\n\n{SEP}",
+                    tg_token, tg_chat,
+                )
+            else:
+                send_telegram(
+                    f"📝 NDA PROJECT\n\n"
+                    f"📋 Project: {title}\n"
+                    f"🔗 {link}\n"
+                    f"💰 Budget: {budget}\n"
+                    f"🌍 Country: {country_name}\n\n"
+                    f"Sign the NDA at the project page, then bid manually — "
+                    f"bid drafting failed so no draft text is available.",
+                    tg_token, tg_chat,
+                )
         else:
             silent         = skip_reason.startswith("SILENT:")
             display_reason = skip_reason[7:] if silent else skip_reason
@@ -1950,12 +1985,20 @@ if __name__ == "__main__":
     _tg_token = _startup_settings["telegram_bot_token"]
     _tg_chat  = str(_startup_settings["telegram_chat_id"])
 
-    # Shared pause state
-    bot_state = {"paused": False}
+    # Shared pause state — persisted to disk so a crash-restart within the
+    # same deploy doesn't silently un-pause the bot. NOTE: this does NOT
+    # survive an actual `git push` redeploy — Railway builds a fresh
+    # container from a clean git checkout each time, so any local file
+    # (committed or not) starts over regardless. There's no database or
+    # persistent volume in this project to solve that properly yet — if you
+    # paused before a push, re-send /pause once the new deploy is live.
+    bot_state = load_json(BOT_STATE_FILE, {"paused": False})
+    bot_state.setdefault("paused", False)
 
     # Send startup notification
+    _resume_note = " (still paused from before — send /play to resume)" if bot_state["paused"] else ""
     send_telegram(
-        "🤖 Freelancer bot started. Send /status to check, /pause to pause.",
+        f"🤖 Freelancer bot started{_resume_note}. Send /status to check, /pause to pause.",
         _tg_token, _tg_chat,
     )
 
