@@ -370,23 +370,31 @@ _BLOCKED_COUNTRY_PHRASES = [
     # "georgia"/"georgian" and bare "jordan" deliberately excluded — collide
     # with the US state and the common first name. Currency codes (GEL, JOD)
     # and capital cities still catch those two.
-    "brazil", "brazilian", "brl", "sao paulo", "rio de janeiro", "brasilia", "+55",
-    "mexico", "mexican", "mxn", "mexico city", "guadalajara", "monterrey", "+52",
-    "argentina", "argentine", "argentinian", "ars", "buenos aires", "+54",
+    # Note: bare 3-letter currency-code fragments (e.g. "pen", "rub", "ars",
+    # "irr") were deliberately removed from this list on 2026-09-29 — they
+    # collided with ordinary English words ("pen" matched inside "open",
+    # "independent", "expense"; "ars" matched inside "cars", "years",
+    # "dollars"; "rub" inside "rubbish"/"scrub"; "irr" inside "irresistible")
+    # and silently filtered out a large share of ordinary English-language
+    # projects. Those currencies are already caught exactly and safely via
+    # the currency.code check in _BLOCKED_CURRENCIES — no detection lost.
+    "brazil", "brazilian", "sao paulo", "rio de janeiro", "brasilia", "+55",
+    "mexico", "mexican", "mexico city", "guadalajara", "monterrey", "+52",
+    "argentina", "argentine", "argentinian", "buenos aires", "+54",
     "colombia", "colombian", "cop peso", "bogota", "medellin", "+57",
-    "peru", "peruvian", "pen", "lima peru", "+51",
+    "peru", "peruvian", "lima peru", "+51",
     "venezuela", "venezuelan", "caracas", "+58",
     "ecuador", "ecuadorian", "quito", "guayaquil", "+593",
-    "russia", "russian", "rub", "ruble", "moscow", "saint petersburg", "+7",
-    "ukraine", "ukrainian", "uah", "hryvnia", "kyiv", "kiev", "+380",
-    "belarus", "belarusian", "byn", "minsk", "+375",
-    "china", "chinese", "cny", "rmb", "yuan", "beijing", "shanghai",
+    "russia", "russian", "ruble", "moscow", "saint petersburg", "+7",
+    "ukraine", "ukrainian", "hryvnia", "kyiv", "kiev", "+380",
+    "belarus", "belarusian", "minsk", "+375",
+    "china", "chinese", "yuan", "beijing", "shanghai",
     "shenzhen", "guangzhou", "+86",
-    "thailand", "thai", "thb", "baht", "bangkok", "+66",
-    "malaysia", "malaysian", "myr", "ringgit", "kuala lumpur", "+60",
+    "thailand", "thai", "baht", "bangkok", "+66",
+    "malaysia", "malaysian", "ringgit", "kuala lumpur", "+60",
     "mongolia", "mongolian", "ulaanbaatar", "+976",
-    "iran", "iranian", "irr", "tehran", "+98",
-    "iraq", "iraqi", "iqd", "baghdad", "+964",
+    "iran", "iranian", "tehran", "+98",
+    "iraq", "iraqi", "baghdad", "+964",
     "turkey", "turkish", "istanbul", "ankara", "+90",
     "tbilisi", "gel lari",
     "armenian", "yerevan", "+374",
