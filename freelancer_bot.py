@@ -162,7 +162,7 @@ _BLOCKED_COUNTRIES = {
     "nigeria", "india", "pakistan", "bangladesh", "indonesia",
     "philippines", "vietnam", "nepal", "sri lanka", "ghana",
     "kenya", "ethiopia", "egypt", "myanmar", "cambodia",
-    "uzbekistan", "kazakhstan", "moldova", "albania", "kosovo",
+    "uzbekistan", "kazakhstan",
     "bolivia", "paraguay", "honduras", "guatemala", "el salvador",
     "morocco", "algeria", "tunisia", "libya", "sudan",
     "cameroon", "tanzania", "uganda", "zimbabwe", "zambia",
@@ -180,7 +180,7 @@ _BLOCKED_COUNTRIES = {
 # field, not free text, so there's no substring-collision risk here.
 _BLOCKED_CURRENCIES = {
     "INR", "NGN", "PKR", "BDT", "IDR", "PHP", "NPR", "LKR", "GHS", "KES",
-    "ETB", "EGP", "MMK", "KHR", "UZS", "KZT", "MDL", "BOB", "PYG", "HNL",
+    "ETB", "EGP", "MMK", "KHR", "UZS", "KZT", "BOB", "PYG", "HNL",
     "GTQ", "MAD", "DZD", "TND", "LYD", "SDG", "XAF", "XOF", "ZMW", "UGX",
     "TZS", "BRL", "MXN", "ARS", "COP", "PEN", "VES", "RUB", "UAH", "BYN",
     "CNY", "THB", "MYR", "MNT", "IRR", "IQD", "TRY", "GEL", "AMD", "AZN",
@@ -348,9 +348,6 @@ _BLOCKED_COUNTRY_PHRASES = [
     "cambodian", "cambodia",
     "uzbekistan", "uzbek",
     "kazakhstan", "kazakh",
-    "moldovan", "moldova",
-    "albanian", "albania",
-    "kosovan", "kosovo",
     "bolivian", "bolivia",
     "paraguayan", "paraguay",
     "honduran", "honduras",
@@ -726,64 +723,133 @@ def build_telegram_message(project, country, skill_names):
 # ---------------------------------------------------------------------------
 # Bid drafting via Claude API
 # ---------------------------------------------------------------------------
+BID_FEW_SHOT_EXAMPLES = """\
+Project: "Shopify to WooCommerce migration for 200+ products"
+Employer Country: United States
+
+Bid:
+Saw you need a Shopify-to-WooCommerce migration for 200+ products. I completed a similar migration last month for a US e-commerce brand with 500 SKUs and custom product variants. I'll handle the product import using WP All Import, set up your theme, configure payment gateways (Stripe + PayPal), and test checkout flows across devices. Daily updates included. I specialize in WooCommerce migrations for US-based brands and can start immediately. Are you available for a 15-min call tomorrow to confirm which plugins you need?
+
+Project: "React dashboard for SaaS analytics with real-time charts"
+Employer Country: United Kingdom
+
+Bid:
+Your React analytics dashboard for SaaS metrics sounds like a great fit for my skillset. I built a similar real-time dashboard for a London fintech startup using Recharts and WebSocket data feeds, reducing their reporting latency from 5 minutes to under 10 seconds. I'd structure this with React Query for data fetching, implement lazy loading for performance, and use Chart.js or Recharts based on your preference. I've delivered 8 React dashboards for UK/EU SaaS companies in the past 18 months. Would you prefer daily standup calls or async updates via Slack?
+
+Project: "WordPress site speed optimization, GTMetrix 90+ score"
+Employer Country: Canada
+
+Bid:
+Getting your WordPress site to GTMetrix 90+ is exactly what I've been doing for Canadian e-commerce brands. Last week I optimized a Toronto-based store from 45 to 94 on Performance by implementing critical CSS, deferring non-essential JS, and switching to Cloudflare APO. I'll audit your current setup, identify render-blocking resources, optimize images with ShortPixel, and configure WP Rocket or LiteSpeed Cache depending on your host. I guarantee 90+ or I'll keep working until we hit it. Can you share your current GTMetrix report so I can identify the biggest bottlenecks?
+
+Project: "AI chatbot for customer support using Claude API"
+Employer Country: United States
+
+Bid:
+Your AI chatbot for customer support using Claude is right in my wheelhouse. I built a similar support bot for a US SaaS company last month that handles 60% of their tier-1 queries automatically. I'll integrate the Claude API, set up conversation memory with PostgreSQL, implement fallback to human agents, and add analytics to track resolution rates. I've delivered 12 AI chatbot projects using Claude and OpenAI in the past year. Are you available for a quick call this week to discuss your training data requirements?
+
+Project: "SaaS MVP with Next.js dashboard and Stripe payments"
+Employer Country: Australia
+
+Bid:
+Your SaaS MVP with Next.js dashboard and Stripe payments is exactly the kind of project I specialize in. I delivered a similar platform for an AU startup 3 months ago, Next.js front-end, Node.js back-end, Stripe subscription billing, and role-based access control. I'll start with Figma wireframes to map out the user flows, then build the dashboard with real-time data updates and clean, production-ready code. I've completed 40+ SaaS MVPs in 6 years and can have your v1 ready in 4 weeks. Can we schedule a call to confirm your feature priorities?"""
+
+BID_ALLOWED_COUNTRIES = (
+    "United States, United Kingdom, Canada, Australia, New Zealand, United Arab Emirates, "
+    "South Africa, Germany, France, Netherlands, Sweden, Norway, Denmark, Finland, Switzerland, "
+    "Austria, Belgium, Ireland, Portugal, Spain, Italy, Poland, Czech Republic, Romania, Bulgaria, "
+    "Croatia, Slovenia, Slovakia, Hungary, Greece, Cyprus, Malta, Luxembourg, Iceland, Liechtenstein, "
+    "Monaco, San Marino, Andorra, Kosovo, Montenegro, North Macedonia, Albania, Bosnia and "
+    "Herzegovina, Serbia, Moldova, Estonia, Latvia, Lithuania, Israel, Japan, South Korea, "
+    "Singapore, Hong Kong, Taiwan, Macau, Brunei, Qatar, Kuwait, Bahrain, Oman, and Saudi Arabia "
+    "(Saudi Arabia only for projects with a budget of $2,000 USD or more)"
+)
+
 BID_SYSTEM_TEMPLATE = (
-    "You are writing a Freelancer.com bid for Anne Sharp, a senior web developer "
-    "and digital marketer. Here is her full portfolio — pick the 1-2 most relevant items "
-    "based on the job description and reference them naturally in the bid. Only include "
-    "portfolio URLs that are genuinely relevant. Vary your selections — do not always "
-    "pick the same project. Return only the bid text, no commentary.\n\n"
-    "Your bids must be between 80 and 120 words maximum. Not a word more. Be punchy and "
-    "concise. Every sentence must earn its place. Cut anything that can be implied.\n\n"
-    "Do not use em dashes, en dashes, or hyphens anywhere in the bid text under any "
-    "circumstances. Rewrite any sentence that would require a dash.\n\n"
-    "Portfolio:\n{portfolio}"
+    "You are an expert Freelancer.com bid writer specializing in high-conversion proposals for "
+    "US, EU, UK, AU, NZ, UAE, Canadian, South African, and Western European clients, writing on "
+    "behalf of Anne Sharp, an individual freelance developer. Your bids consistently achieve "
+    "10-20% message conversion rates by being highly personalized, concise, and value-focused.\n\n"
+    "FREELANCER PROFILE CONTEXT\n"
+    "Positioning: SaaS MVPs & Dashboards | 40+ Production Apps | US & EU Startups\n"
+    "Niche: SaaS MVPs, dashboards, CRMs, booking systems for clients worldwide\n"
+    "Stack: Next.js, React, TypeScript, Node.js, PostgreSQL, Firebase, OpenAI, Claude API, Python, PHP\n"
+    "Differentiators: 6+ years experience, 40+ production apps, Figma-to-code workflow, AI integration, proactive communication\n"
+    "Average project value: $1,000-$5,000 USD (fixed-price, milestone payments)\n"
+    "Tone: Professional, direct, outcome-focused. No fluff, no over-enthusiasm, no desperation.\n\n"
+    "Here is Anne's full portfolio. Pick the 1-2 most relevant items based on the job description "
+    "and reference them naturally in the PROOF step, with their real URL. Only include portfolio "
+    "URLs that are genuinely relevant. Vary your selections across bids, do not always pick the "
+    "same project.\n"
+    "Portfolio:\n{portfolio}\n\n"
+    "TASK\n"
+    "Generate a Freelancer.com bid proposal for the project given in the user message. The bid must:\n"
+    "1. Pass Freelancer's quality-scoring algorithm — no template-like repetition, high personalization\n"
+    "2. Be 150-300 words total (optimal response rate range)\n"
+    "3. Reference at least 2 specific details from the project description\n"
+    "4. Include one relevant portfolio link or result metric\n"
+    "5. End with a clear call-to-action question\n\n"
+    "GEOGRAPHIC FILTER\n"
+    "Before writing anything, check the employer_country given in the user message. If it is a "
+    "country not in the allowed list below, output exactly the text BLOCKED_COUNTRY and nothing "
+    "else — do not write a bid. employer_country is frequently blank because Freelancer's API "
+    "doesn't always expose it — in that case do not block on that basis alone; only block if the "
+    "project description itself clearly states a location outside the allowed list.\n"
+    f"Allowed countries: {BID_ALLOWED_COUNTRIES}.\n\n"
+    "CONSTRAINTS\n"
+    "- Never use generic openings like \"Hi there,\" \"I am interested,\" or \"I can help you with this project\"\n"
+    "- Never mention being a middleman, agency, or subcontractor\n"
+    "- Always write in first person as an individual freelancer, never \"we\" or \"our team\"\n"
+    "- Use natural sentence variation — no repetitive structures across bids\n"
+    "- Do not include emojis, exclamation marks, or overly enthusiastic language\n"
+    "- Do not use the word \"ships\" or \"shipped\" — use \"delivered,\" \"built,\" \"completed,\" or \"launched\" instead\n"
+    "- Do not use em dashes, en dashes, or hyphens anywhere in the bid text under any circumstances. "
+    "Rewrite any sentence that would require a dash.\n\n"
+    "BID STRUCTURE — follow this exact 5-part structure\n"
+    "1. HOOK (1 sentence, 15-25 words): Reference a specific detail from the project title or "
+    "description. Show you actually read it.\n"
+    "2. PROOF (2 sentences, 40-60 words): Mention one similar project from the portfolio above "
+    "with a measurable result or specific detail.\n"
+    "3. PLAN (2-3 sentences, 60-80 words): Briefly explain your approach to their specific "
+    "problem. Include 1-2 concrete steps or tools you'd use. Mention Next.js, React, or "
+    "TypeScript when relevant, don't force it. Reference AI/LLM integration only if the project "
+    "mentions automation, chat, or content generation. For dashboard projects mention real-time "
+    "updates, role-based access, or clean data views. For CRM/booking projects mention Stripe "
+    "integration, email/SMS, or third-party APIs. For AI projects mention OpenAI, Claude, LLM "
+    "pipelines, or smart automation.\n"
+    "4. FIT (1 sentence, 20-30 words): Why you're the right choice. Tie it to their industry, "
+    "timeline, or technical requirement.\n"
+    "5. CTA (1 question, 15-25 words): End with a specific question that invites a response.\n\n"
+    "Sign-off: Regards, Anne S.\n\n"
+    "EXAMPLES (style and structure references)\n"
+    "{examples}\n\n"
+    "OUTPUT FORMAT\n"
+    "Output ONLY the bid text (or the literal text BLOCKED_COUNTRY if blocked). No introductions, "
+    "no explanations, no markdown formatting. Plain text only, ready to paste into Freelancer.com.\n\n"
+    "QUALITY CHECKLIST — verify before responding\n"
+    "- Hook references a specific detail from the project, not generic\n"
+    "- Proof includes a concrete result or similar project example\n"
+    "- Plan mentions 1-2 specific tools, steps, or approaches\n"
+    "- Total word count is 150-300 words\n"
+    "- Ends with a clear question (CTA)\n"
+    "- No blocked countries\n"
+    "- No template-like phrases reused from previous bids\n"
+    "- Does not use \"ships\" or \"shipped\"\n"
+    "- Written in first person as an individual freelancer, not \"we\" or \"our team\""
 )
 
 BID_USER_TEMPLATE = """\
-Write a bid for this project:
-Title: {title}
-Description: {description}
-Budget: {budget}
-Skills: {skills}
-
-Follow this exact structure and rules:
-
-STRUCTURE:
-1. Opening Hook
-Write one or two sentences that show you read the brief and have a genuine reaction to it. Do not open with I — start with the project, the problem, or an observation. Make it specific enough that it could only work for this post.
-
-2. Proof You Read Carefully
-Reference one or two specific details, goals, or constraints from the job post. Do not be vague. Name the actual thing they mentioned — the tech stack, the deadline pressure, the audience, the integration they need. Phrase it naturally, as though continuing a thought.
-
-3. Relevant Experience — Mini Story
-Two to three sentences describing something genuinely similar you have handled. Lead with what you built or solved, then mention the outcome or benefit. Name tools or approaches where relevant. Pick the most relevant portfolio project and reference it naturally with its URL.
-
-4. Authority and Trust
-One sentence that conveys reliability and professionalism. Write it fresh — sound like a real person, not a brochure. Rotate the angle each time: sometimes communication, sometimes process, sometimes ownership mentality.
-
-5. Recent Previous Projects
-Use this exact format — only include URLs genuinely relevant to this project (1-2 max).
-Use a hyphen (-) before each portfolio link, not an asterisk (*):
-Recent work:
-- [url]
-
-6. Close and CTA
-End with one natural sentence inviting next steps based on what this specific client needs.
-
-Sign-off: Regards, Anne S.
-
-STYLE RULES:
-* 80-120 words total, not including sign-off and links
-* No bullet points or lists in the body copy
-* No greetings, no flattery, no filler phrases like I would love to help or I am perfect for this
-* No generic claims — every sentence specific to this project
-* Short paragraphs, easy to skim
-* Vary sentence rhythm naturally
-* Sound like a person who read the post twice and is responding honestly"""
+<title>{title}</title>
+<description>{description}</description>
+<budget>{budget}</budget>
+<skills>{skills}</skills>
+<employer_country>{employer_country}</employer_country>
+<posted_time>{posted_time}</posted_time>"""
 
 
-def draft_bid(project, skill_names, portfolio):
-    """Call Claude API to draft a bid for the project. Returns the bid text or None."""
+def draft_bid(project, skill_names, portfolio, country_name=""):
+    """Call Claude API to draft a bid for the project. Returns the bid text, or
+    None if drafting failed or the model decided the country should be blocked."""
     # Hard stop — raises immediately if eligibility was never confirmed
     if not project.get("eligibility_confirmed", False):
         raise Exception(f"SAFETY VIOLATION: draft_bid called without eligibility check on {project.get('title')}")
@@ -803,12 +869,14 @@ def draft_bid(project, skill_names, portfolio):
     skills_str  = ", ".join(skill_names) if skill_names else "N/A"
     portfolio_json = json.dumps(portfolio, indent=2) if portfolio else "No portfolio available."
 
-    system_prompt = BID_SYSTEM_TEMPLATE.format(portfolio=portfolio_json)
+    system_prompt = BID_SYSTEM_TEMPLATE.format(portfolio=portfolio_json, examples=BID_FEW_SHOT_EXAMPLES)
     user_prompt   = BID_USER_TEMPLATE.format(
         title=title,
         description=description,
         budget=budget,
         skills=skills_str,
+        employer_country=country_name or "Unknown",
+        posted_time=fmt_posted(project.get("time_submitted")),
     )
 
     def clean(text):
@@ -860,16 +928,22 @@ def draft_bid(project, skill_names, portfolio):
         bid_text = next((b.text for b in response.content if b.type == "text"), None)
         if not bid_text:
             return None
-        bid_text = clean(bid_text)
 
+        if bid_text.strip().upper().startswith("BLOCKED_COUNTRY"):
+            log(f"Bid drafting declined — model flagged blocked country (employer_country={country_name or 'Unknown'}).")
+            return None
+
+        bid_text = clean(bid_text)
         wc = word_count(bid_text)
-        if wc > 120:
-            log(f"Bid too long ({wc} words) — asking Claude to trim.")
+
+        if wc > 300 or wc < 150:
+            direction = "trim it to under 300 words" if wc > 300 else "expand it to at least 150 words"
+            log(f"Bid outside 150-300 word range ({wc} words) — asking Claude to {direction}.")
             messages.append({"role": "assistant", "content": bid_text})
             messages.append({"role": "user", "content": (
-                "This bid is too long. Trim it to under 120 words while keeping the hook, "
-                "the relevant experience, the portfolio links, and the sign-off. "
-                "Remove any sentence that isn't essential."
+                f"This bid is {wc} words. Please {direction} while keeping the hook, "
+                "the proof, the plan, the fit, the CTA, and the sign-off intact. "
+                "Stay within the 150-300 word range."
             )})
             response = client.messages.create(
                 model="claude-sonnet-5",
@@ -878,11 +952,12 @@ def draft_bid(project, skill_names, portfolio):
                 messages=messages,
             )
             if response.stop_reason == "max_tokens":
-                log("Trim retry hit max_tokens — keeping the pre-trim bid instead.", "warning")
+                log("Length-adjustment retry hit max_tokens — keeping the original bid instead.", "warning")
             else:
-                bid_text = next((b.text for b in response.content if b.type == "text"), bid_text)
-                bid_text = clean(bid_text)
-                wc = word_count(bid_text)
+                retry_text = next((b.text for b in response.content if b.type == "text"), None)
+                if retry_text and not retry_text.strip().upper().startswith("BLOCKED_COUNTRY"):
+                    bid_text = clean(retry_text)
+                    wc = word_count(bid_text)
 
         log(f"Bid written: {wc} words")
         return bid_text
@@ -1243,7 +1318,7 @@ def process_project(project, token, portfolio, tg_token, tg_chat, my_skill_ids, 
 
     # STEP 4: Draft bid — only reached if eligible
     skill_names = get_skill_names(project, jobs_dict)
-    bid_text = draft_bid(project, skill_names, portfolio)
+    bid_text = draft_bid(project, skill_names, portfolio, country_name)
     if not bid_text:
         log(f"DRAFT FAILED: {title}")
         return False
