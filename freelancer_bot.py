@@ -453,6 +453,100 @@ def is_india_project(project):
     return any(phrase in text for phrase in _BLOCKED_COUNTRY_PHRASES)
 
 
+# ISO 3166 "official"/long-form country names the lookup endpoint sometimes
+# returns instead of the common short name our allow/block lists use (e.g.
+# "Moldova, Republic of" instead of "Moldova"). Confirmed live on 2026-09-29
+# that this endpoint mixes both forms — even "United States of America" would
+# fail a plain string match against "United States". Mapped to the short form
+# used in config.json / _BLOCKED_COUNTRIES so lookups always normalize first.
+_COUNTRY_NAME_ALIASES = {
+    "united states of america": "united states",
+    "united kingdom of great britain and northern ireland": "united kingdom",
+    "russian federation": "russia",
+    "iran, islamic republic of": "iran",
+    "lao people's democratic republic": "laos",
+    "syrian arab republic": "syria",
+    "brunei darussalam": "brunei",
+    "viet nam": "vietnam",
+    "korea, republic of": "south korea",
+    "korea, democratic people's republic of": "north korea",
+    "moldova, republic of": "moldova",
+    "taiwan, province of china": "taiwan",
+    "venezuela, bolivarian republic of": "venezuela",
+    "bolivia, plurinational state of": "bolivia",
+    "macedonia, the former yugoslav republic of": "north macedonia",
+    "tanzania, united republic of": "tanzania",
+    "czechia": "czech republic",
+    "türkiye": "turkey",
+    "turkiye": "turkey",
+    "cote d'ivoire": "ivory coast",
+    "côte d'ivoire": "ivory coast",
+    "hong kong special administrative region of china": "hong kong",
+    "macao": "macau",
+    "macao special administrative region of china": "macau",
+}
+
+
+def _canonicalize_country_name(name):
+    """Normalize a country name to the short form used by config.json's
+    allowed list and _BLOCKED_COUNTRIES, via the explicit alias map above,
+    then a generic fallback for any "X, Y of Z" / "X, Z Republic" pattern
+    not explicitly listed (covers ISO long forms this map doesn't enumerate)."""
+    if not name:
+        return name
+    lower = name.strip().lower()
+    if lower in _COUNTRY_NAME_ALIASES:
+        return _COUNTRY_NAME_ALIASES[lower]
+    if "," in lower:
+        prefix = lower.split(",", 1)[0].strip()
+        if prefix in _COUNTRY_NAME_ALIASES:
+            return _COUNTRY_NAME_ALIASES[prefix]
+        return prefix  # e.g. "Some Country, Republic of" -> "some country"
+    return lower
+
+
+def fetch_client_country(seo_url):
+    """Look up the client's real registered country via Freelancer's internal
+    webapp endpoint (the one their own site uses to render "About the client"
+    on the public project page). This is NOT part of the documented public
+    API — discovered via network inspection on 2026-09-29 — and could change
+    or start failing at any time without notice.
+
+    Returns (country_name, city) on success, or (None, None) on any failure
+    (network error, unexpected shape, endpoint blocked, etc). Callers MUST
+    treat (None, None) as "unknown", not "blocked" — falling back to the
+    currency/text heuristics — never as grounds to deny by default. Denying
+    on lookup failure previously took down all bidding for a full deploy
+    window (see the country_allowed() history below) and this endpoint is
+    less stable than the official API, so that risk is real here too."""
+    if not seo_url:
+        return None, None
+    seo_url = seo_url.strip("/")
+    try:
+        resp = requests.get(
+            "https://www.freelancer.com/api/projects/0.1/projects/seo",
+            params={
+                "seo_url": seo_url, "webapp": "1", "compact": "true",
+                "new_errors": "true", "new_pools": "true",
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                "Referer": f"https://www.freelancer.com/projects/{seo_url}",
+            },
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return None, None
+        data = resp.json()
+        if data.get("status") != "success":
+            return None, None
+        address = ((data.get("result") or {}).get("client") or {}).get("address") or {}
+        return address.get("country") or None, address.get("city") or None
+    except Exception as e:
+        log(f"Client-country lookup failed for {seo_url}: {e}", "warning")
+        return None, None
+
+
 def build_country_set(settings):
     """Return a lowercase set of allowed country names."""
     countries = settings.get("countries", [])
@@ -465,13 +559,19 @@ def build_country_set(settings):
 
 def country_allowed(country_name, allowed_set):
     if not country_name:
-        # Freelancer's API no longer returns owner/user details for this token
-        # (owner_id and users are null on every project as of 2026-07) — country
-        # is unknown for 100% of projects, not just the untrustworthy ones. Denying
-        # by default here blocks every project. Text-based signals (is_india_project,
-        # currency, language) are the real filters until owner data comes back.
+        # The documented API still returns owner/location as null for this
+        # token. fetch_client_country() (added 2026-09-29) can supply a real
+        # country via an undocumented endpoint, but on any failure it also
+        # returns None — and this branch is what makes that safe: an unknown
+        # country always falls through to the currency/text heuristics rather
+        # than being denied. Denying by default here previously blocked every
+        # project outright when country was unconditionally blank (2026-07-08)
+        # — do not change this to False.
         return True
-    name_lower = country_name.lower()
+    # Canonicalize before comparing — fetch_client_country() can return an
+    # ISO long-form name (e.g. "Moldova, Republic of") that won't plain-string
+    # match config.json's short-form allowed list otherwise.
+    name_lower = _canonicalize_country_name(country_name)
     if name_lower in _BLOCKED_COUNTRIES:
         return False  # Explicit blocklist takes priority
     return name_lower in allowed_set
@@ -1465,28 +1565,27 @@ def main(bot_state=None):
             log(f"FILTERED [seen] {title_short}")
             continue
 
-        owner_id     = str(project.get("owner_id", ""))
-        owner        = users.get(owner_id) or {}
-        country_name = (((owner.get("location") or {}).get("country") or {}).get("name") or "")
-
-        if not country_allowed(country_name, allowed):
-            counts["country"] += 1
-            new_seen[proj_id] = now
-            log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
-            continue
-
-        if owner_city_blocked(owner):
-            counts["country"] += 1
-            new_seen[proj_id] = now
-            owner_city = ((owner.get("location") or {}).get("city") or "")
-            log(f"FILTERED [country] {title_short} city=\"{owner_city}\" (currency was {(project.get('currency') or {}).get('code', '?')})")
-            continue
-
         proj_currency = (project.get("currency") or {}).get("code", "")
         if proj_currency in _BLOCKED_CURRENCIES:
             counts["currency"] += 1
             new_seen[proj_id] = now
             log(f"FILTERED [currency] {title_short} currency={proj_currency} budget={fmt_budget(project)}")
+            continue
+
+        # Real client country via the internal webapp lookup (2026-09-29) —
+        # runs only after the free currency check, since it costs an HTTP
+        # call. A lookup failure returns (None, None), which country_allowed()
+        # treats as "unknown" and lets through — never denied outright.
+        country_name, client_city = fetch_client_country(project.get("seo_url"))
+        if not country_allowed(country_name, allowed):
+            counts["country"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
+            continue
+        if country_name and client_city and client_city.strip().lower() in _BLOCKED_OWNER_CITIES:
+            counts["country"] += 1
+            new_seen[proj_id] = now
+            log(f"FILTERED [country] {title_short} city=\"{client_city}\"")
             continue
 
         if not is_english(project):
@@ -1662,26 +1761,24 @@ def process_single_project(project_id, bot_state):
 
     title_short = f"\"{project.get('title', '')[:60]}\""
 
-    # Country filter
-    owner_id     = str(project.get("owner_id", ""))
-    owner        = users.get(owner_id) or {}
-    location     = (owner.get("location") or {})
-    country_name = ((location.get("country") or {}).get("name") or "")
-    if not country_allowed(country_name, allowed):
-        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
-        log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
-        return
-
-    if owner_city_blocked(owner):
-        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
-        log(f"FILTERED [country] {title_short} city=\"{location.get('city', '')}\"")
-        return
-
-    # Currency filter
+    # Currency filter (cheap, no HTTP call — runs before the country lookup)
     ws_currency = (project.get("currency") or {}).get("code", "")
     if ws_currency in _BLOCKED_CURRENCIES:
         seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
         log(f"FILTERED [currency] {title_short} currency={ws_currency}")
+        return
+
+    # Country filter — real client country via the internal webapp lookup.
+    # A lookup failure returns (None, None); country_allowed() treats that
+    # as "unknown" and lets it through, never denies outright.
+    country_name, client_city = fetch_client_country(project.get("seo_url"))
+    if not country_allowed(country_name, allowed):
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [country] {title_short} country=\"{country_name}\"")
+        return
+    if country_name and client_city and client_city.strip().lower() in _BLOCKED_OWNER_CITIES:
+        seen_ids[proj_id] = now; cleanup_and_save(seen_ids)
+        log(f"FILTERED [country] {title_short} city=\"{client_city}\"")
         return
 
     # Language filter
