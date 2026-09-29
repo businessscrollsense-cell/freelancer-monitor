@@ -520,6 +520,19 @@ def fetch_client_country(seo_url):
     on lookup failure previously took down all bidding for a full deploy
     window (see the country_allowed() history below) and this endpoint is
     less stable than the official API, so that risk is real here too."""
+    # DISABLED 2026-09-29, same day this shipped: zero bids went out after
+    # this was added, and Railway deploy logs showed raw Freelancer.com page
+    # HTML being dumped at high volume ("Railway rate limit reached... 198
+    # messages dropped"). Exact mechanism not yet confirmed — this function's
+    # own code has no path that logs an untruncated response body, so either
+    # the endpoint started returning HTML instead of JSON under this call
+    # volume (most likely — no throttling between calls, no session, an
+    # undocumented endpoint), or something else in the pipeline is involved.
+    # Hard-disabled here rather than left live while unconfirmed. Every
+    # caller already treats (None, None) as "unknown, fall through to
+    # currency/text heuristics" — see country_allowed() — so this is a safe
+    # no-op, not a partial revert. Re-enable only after confirming the cause.
+    return None, None
     if not seo_url:
         return None, None
     seo_url = seo_url.strip("/")
